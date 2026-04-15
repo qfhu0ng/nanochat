@@ -6,7 +6,7 @@ Notable features:
 - untied weights for token embedding and lm_head
 - relu^2 activation in MLP
 - norm after token embedding
-- no learnable params in rmsnorm
+- no learnable params in rmsnorm (optional learnable gamma via use_learnable_norm)
 - no bias in linear layers
 - Group-Query Attention (GQA) support for more efficient inference
 - Flash Attention 3 integration
@@ -266,6 +266,8 @@ class MLAttention(nn.Module):
 class Block(nn.Module):
     def __init__(self, config, layer_idx):
         super().__init__()
+        assert config.attn_variant in ("standard", "mla"), f"Unknown attn_variant: {config.attn_variant!r}"
+        assert config.mlp_variant in ("relu2", "swiglu"), f"Unknown mlp_variant: {config.mlp_variant!r}"
         self.attn = MLAttention(config, layer_idx) if config.attn_variant == "mla" else CausalSelfAttention(config, layer_idx)
         self.mlp = SwiGLUMLP(config) if config.mlp_variant == "swiglu" else MLP(config)
         # Learnable norm (None when disabled — forward falls back to parameterless norm())

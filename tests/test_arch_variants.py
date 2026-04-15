@@ -109,7 +109,9 @@ class TestMLAKVCache:
         B, T_prefill = 1, 16
         idx_prefill = torch.randint(0, 32768, (B, T_prefill), device=DEVICE)
 
-        kv_cache = KVCache(model.config, B, max_seq_len=128, device=DEVICE, dtype=DTYPE)
+        config = model.config
+        head_dim = config.n_embd // config.n_head
+        kv_cache = KVCache(B, config.n_kv_head, 128, head_dim, config.n_layer, DEVICE, DTYPE)
 
         with torch.no_grad():
             logits_prefill = model(idx_prefill, kv_cache=kv_cache)
