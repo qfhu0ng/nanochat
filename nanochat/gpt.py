@@ -385,6 +385,17 @@ class GPT(nn.Module):
                 torch.nn.init.uniform_(block.mlp.c_fc.weight, -s * 0.4, s * 0.4)
                 torch.nn.init.zeros_(block.mlp.c_proj.weight)
 
+        # LearnableRMSNorm gamma init (must be explicit because meta device skips data init)
+        for block in self.transformer.h:
+            if block.attn_norm is not None:
+                block.attn_norm.gamma.data.fill_(1.0)
+            if block.mlp_norm is not None:
+                block.mlp_norm.gamma.data.fill_(1.0)
+        if self.embed_norm is not None:
+            self.embed_norm.gamma.data.fill_(1.0)
+        if self.final_norm is not None:
+            self.final_norm.gamma.data.fill_(1.0)
+
         # Per-layer scalars
         # Per-layer resid init: stronger residual at early layers, weaker at deep layers
         n_layer = self.config.n_layer
