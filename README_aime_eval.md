@@ -115,6 +115,23 @@ python -m pytest tests/test_aime_task.py -v
 >
 > **模型输出**: To find the number of minutes the walk takes Aya, we need to calculate the total time spent in the coffee shop and then divide it by the total time spent in the coffee shop... *(逻辑混乱，反复重复，无法有效推导)*
 
+### 与标准 ChatCORE Benchmark 对比
+
+同一模型（SFT + safety, d12）在各任务上的表现：
+
+| 任务 | 准确率 | 随机基线 | 超出基线 | 评估类型 |
+|------|--------|---------|---------|---------|
+| SpellingBee | **95.70%** | 0% | +95.70 | 生成式 |
+| ARC-Easy | **30.09%** | 25% | +5.09 | 选择题 |
+| ARC-Challenge | **29.86%** | 25% | +4.86 | 选择题 |
+| MMLU | **29.48%** | 25% | +4.48 | 选择题 |
+| HumanEval | **1.83%** | 0% | +1.83 | 生成式 |
+| GSM8K | **0.68%** | 0% | +0.68 | 生成式 |
+| **AIME-2024** | **0.00%** | 0% | +0.00 | 生成式 |
+| **AIME-2025** | **3.33%** | 0% | +3.33 | 生成式 |
+
+**关键观察**：模型在选择题任务上略超随机基线（25%→~30%），在简单生成任务（SpellingBee）上表现优秀，但在数学推理任务上急剧下降（GSM8K 0.68% → AIME 0-3%）。这体现了 AIME 作为高难度数学 benchmark 的区分度——即使模型已具备基础语言理解能力，竞赛级数学推理仍远超其能力边界。
+
 ### AIME 评估的价值
 
 尽管小模型准确率接近 0%，AIME 评估仍有价值：
@@ -127,6 +144,7 @@ python -m pytest tests/test_aime_task.py -v
 完整日志保存在 `dev/logs/` 目录下：
 - `aime_2024_eval.log`
 - `aime_2025_eval.log`
+- `chatcore_safety.log` — ChatCORE 全量评估日志
 
 ## 8. 已知限制与改进方向
 
