@@ -81,6 +81,12 @@ parser.add_argument("--core-metric-every", type=int, default=2000, help="evaluat
 parser.add_argument("--core-metric-max-per-task", type=int, default=500, help="examples per task for CORE metric")
 parser.add_argument("--sample-every", type=int, default=2000, help="sample from model every N steps (-1 = disable)")
 parser.add_argument("--save-every", type=int, default=-1, help="save checkpoints every N steps (-1 = only at end)")
+# Training efficiency
+parser.add_argument("--seed", type=int, default=42, help="random seed for reproducibility")
+parser.add_argument("--compile-mode", type=str, default="default", choices=["default", "reduce-overhead", "max-autotune"], help="torch.compile mode")
+parser.add_argument("--ns-steps", type=int, default=5, help="Polar Express iterations for Muon (default 5)")
+parser.add_argument("--ns-steps-final", type=int, default=-1, help="reduced ns_steps after warmup (-1 = no scheduling)")
+parser.add_argument("--ns-steps-warmup", type=int, default=80, help="steps before reducing ns_steps (default 80, before stats window)")
 # Output
 parser.add_argument("--model-tag", type=str, default=None, help="override model tag for checkpoint directory name")
 args = parser.parse_args()
@@ -91,6 +97,13 @@ user_config = vars(args).copy()  # for logging
 device_type = autodetect_device_type() if args.device_type == "" else args.device_type
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type)
 master_process = ddp_rank == 0 # this process will do logging, checkpointing etc.
+
+# Seed initialization for reproducibility
+import random
+random.seed(args.seed)
+torch.manual_seed(args.seed)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(args.seed)
 synchronize = torch.cuda.synchronize if device_type == "cuda" else lambda: None
 get_max_memory = torch.cuda.max_memory_allocated if device_type == "cuda" else lambda: 0
 if device_type == "cuda":
@@ -183,6 +196,11 @@ if resuming:
 # -----------------------------------------------------------------------------
 # FP8 training initialization and management (this has to be done before torch.compile)
 
+# FP8 + reduce-overhead mutual exclusion check
+if args.fp8 and args.compile_mode == "reduce-overhead":
+    raise ValueError("--fp8 and --compile-mode reduce-overhead are mutually exclusive: "
+                     "FP8 dynamic amax scaling is incompatible with CUDA graph capture")
+
 # Convert Linear layers to Float8Linear if --fp8 is set
 if args.fp8:
     if device_type != "cuda":
@@ -262,7 +280,10 @@ def disable_fp8(model):
 # Compile the model
 
 orig_model = model # original, uncompiled model, for saving raw model state_dict and for inference/evaluation (because the shapes may change shape)
-model = torch.compile(model, dynamic=False) # the inputs to model will never change shape so dynamic=False is safe
+if args.compile_mode == "default":
+    model = torch.compile(model, dynamic=False) # the inputs to model will never change shape so dynamic=False is safe
+else:
+    model = torch.compile(model, dynamic=False, mode=args.compile_mode)
 
 # -----------------------------------------------------------------------------
 # Scaling laws and muP extrapolations to determine the optimal training horizon, batch size, learning rates, weight decay.
@@ -334,6 +355,11 @@ optimizer = model.setup_optimizer(
     weight_decay=weight_decay_scaled,
 )
 
+# Override ns_steps from CLI (setup_optimizer hardcodes ns_steps=5)
+for group in optimizer.param_groups:
+    if group['kind'] == 'muon':
+        group["ns_steps"] = args.ns_steps
+
 if resuming:
     optimizer.load_state_dict(optimizer_data)
     del optimizer_data
@@ -403,6 +429,12 @@ def get_muon_momentum(it):
 # Weight decay scheduler for Muon optimizer (cosine decay to zero over the course of training)
 def get_weight_decay(it):
     return weight_decay_scaled * 0.5 * (1 + math.cos(math.pi * it / num_iterations))
+
+# Polar Express ns_steps scheduler (optional warmup → reduced ns_steps)
+def get_ns_steps(it):
+    if args.ns_steps_final == -1 or args.ns_steps_final == args.ns_steps:
+        return args.ns_steps
+    return args.ns_steps if it < args.ns_steps_warmup else args.ns_steps_final
 
 # -----------------------------------------------------------------------------
 # Training loop
@@ -539,11 +571,13 @@ while True:
     lrm = get_lr_multiplier(step)
     muon_momentum = get_muon_momentum(step)
     muon_weight_decay = get_weight_decay(step)
+    ns_steps = get_ns_steps(step)
     for group in optimizer.param_groups:
         group["lr"] = group["initial_lr"] * lrm
         if group['kind'] == 'muon':
             group["momentum"] = muon_momentum
             group["weight_decay"] = muon_weight_decay
+            group["ns_steps"] = ns_steps
     if scaler is not None:
         scaler.unscale_(optimizer)
         # In distributed training, all ranks must agree on whether to skip the step.
