@@ -622,8 +622,22 @@ class GPT(nn.Module):
         assert idx.device == self.cos.device, f"Rotary embeddings and idx are on different devices: {idx.device} != {self.cos.device}"
         assert self.cos.dtype == COMPUTE_DTYPE, f"Rotary embeddings must be in {COMPUTE_DTYPE}, got {self.cos.dtype}"
         # if kv cache exists, we need to offset the rotary embeddings to the current position in the cache
-        T0 = 0 if kv_cache is None else kv_cache.get_pos()
-        cos_sin = self.cos[:, T0:T0+T], self.sin[:, T0:T0+T] # truncate cache to current sequence length
+        if kv_cache is None:
+            T0 = 0
+            cos_sin = self.cos[:, T0:T0+T], self.sin[:, T0:T0+T]
+        elif kv_cache.is_uniform():
+            T0 = kv_cache.get_pos()
+            cos_sin = self.cos[:, T0:T0+T], self.sin[:, T0:T0+T]
+        else:
+            # Per-element positions for batched decode with different-length prompts.
+            # IMPORTANT: This branch ONLY supports T=1 (single-token decode step).
+            assert T == 1, f"Non-uniform KV cache positions only supported for T=1 decode, got T={T}"
+            positions = kv_cache.cache_seqlens.long()  # (B,)
+            # self.cos shape: (1, max_seq, 1, D/2) → index → (B, 1, D/2) → unsqueeze → (B, 1, 1, D/2)
+            cos_sin = (
+                self.cos[0, positions].unsqueeze(1),  # (B, 1, 1, D/2)
+                self.sin[0, positions].unsqueeze(1),  # (B, 1, 1, D/2)
+            )
 
         # Embed the tokens
         x = self.transformer.wte(idx) # embed current token

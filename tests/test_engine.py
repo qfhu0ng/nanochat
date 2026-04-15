@@ -31,6 +31,7 @@ class MockModel:
     def __init__(self, vocab_size=262):  # 256 bytes + 6 special tokens
         self.vocab_size = vocab_size
         self.config = MockConfig()
+        self.rotary_seq_len = self.config.sequence_len * 10
         self._device = torch.device("cpu")
 
     def get_device(self):
@@ -265,3 +266,151 @@ def test_different_seeds_introduce_variation_when_temperature_nonzero():
 
     # Sanity check: sampling actually introduces variation
     assert len(outputs) > 1, "All seeds produced the same output which is statistically highly improbable."
+
+
+# =============================================================================
+# Batch generation tests (generate_multi / generate_multi_batch)
+# =============================================================================
+
+def test_kv_cache_is_uniform():
+    """Test KVCache.is_uniform() with uniform and non-uniform positions."""
+    kv = KVCache(batch_size=4, num_heads=4, seq_len=32, head_dim=8, num_layers=2,
+                 device="cpu", dtype=torch.float32)
+    # Initially all at 0 → uniform
+    assert kv.is_uniform()
+    # Advance all by same amount → still uniform
+    kv.advance(10)
+    assert kv.is_uniform()
+    # Make one element different → non-uniform
+    kv.cache_seqlens[2] = 5
+    assert not kv.is_uniform()
+    # batch_size=1 is always uniform
+    kv1 = KVCache(batch_size=1, num_heads=4, seq_len=32, head_dim=8, num_layers=2,
+                  device="cpu", dtype=torch.float32)
+    kv1.advance(7)
+    assert kv1.is_uniform()
+
+
+def test_kv_cache_copy_from_single():
+    """Test KVCache.copy_from_single() copies data and position correctly."""
+    num_heads, head_dim, num_layers = 4, 8, 2
+
+    # Source: batch=1, fill with known data
+    src = KVCache(batch_size=1, num_heads=num_heads, seq_len=16, head_dim=head_dim,
+                  num_layers=num_layers, device="cpu", dtype=torch.float32)
+    src.k_cache[:, 0, :10, :, :] = 1.0
+    src.v_cache[:, 0, :10, :, :] = 2.0
+    src.cache_seqlens[0] = 10
+    src.prev_embedding = torch.ones(1, 1, 64)
+
+    # Destination: batch=3
+    dst = KVCache(batch_size=3, num_heads=num_heads, seq_len=32, head_dim=head_dim,
+                  num_layers=num_layers, device="cpu", dtype=torch.float32)
+
+    # Copy to slot 1
+    dst.copy_from_single(src, 1)
+    assert dst.cache_seqlens[1].item() == 10
+    assert dst.cache_seqlens[0].item() == 0  # other slots unchanged
+    assert dst.cache_seqlens[2].item() == 0
+    assert (dst.k_cache[:, 1, :10, :, :] == 1.0).all()
+    assert (dst.v_cache[:, 1, :10, :, :] == 2.0).all()
+    assert (dst.k_cache[:, 0, :, :, :] == 0.0).all()  # slot 0 untouched
+    assert dst.prev_embedding is not None
+    assert dst.prev_embedding.shape[0] == 3
+    assert (dst.prev_embedding[1] == 1.0).all()
+
+
+def test_generate_multi_greedy_matches_sequential():
+    """
+    With temperature=0 (greedy), generate_multi() must produce identical output
+    to sequential generate() calls for each prompt.
+    """
+    model = MockModel()
+    engine = Engine(model, ByteTokenizer())
+
+    prompts = [
+        [261, 72, 101, 108, 108, 111],       # <bos> + "Hello"
+        [261, 87, 111, 114, 108, 100, 33],    # <bos> + "World!"
+        [261, 65],                              # <bos> + "A" (short)
+    ]
+    max_tokens = 10
+
+    # Sequential: one at a time
+    seq_results = []
+    for prompt in prompts:
+        tokens_out = []
+        for token_column, _ in engine.generate(prompt, num_samples=1,
+                                                max_tokens=max_tokens, temperature=0.0, seed=42):
+            tokens_out.append(token_column[0])
+        seq_results.append(tokens_out)
+
+    # Batched
+    batch_results = [[] for _ in prompts]
+    for token_column, _ in engine.generate_multi(prompts, max_tokens=max_tokens,
+                                                  temperature=0.0, seed=42):
+        for i, tok in enumerate(token_column):
+            batch_results[i].append(tok)
+
+    for i in range(len(prompts)):
+        assert seq_results[i] == batch_results[i], \
+            f"Prompt {i}: sequential {seq_results[i]} != batch {batch_results[i]}"
+
+
+def test_generate_multi_batch_convenience():
+    """Test generate_multi_batch() returns correct structure."""
+    model = MockModel()
+    engine = Engine(model, ByteTokenizer())
+
+    prompts = [
+        [261, 72, 101],
+        [261, 87, 111, 114, 108],
+    ]
+    results, masks = engine.generate_multi_batch(prompts, max_tokens=5, temperature=0.0)
+
+    assert len(results) == 2
+    assert len(masks) == 2
+    # Each result starts with original prompt
+    assert results[0][:3] == prompts[0]
+    assert results[1][:5] == prompts[1]
+    # Prompt tokens have mask=0, generated tokens have mask=1
+    assert all(m == 0 for m in masks[0][:3])
+    assert all(m == 0 for m in masks[1][:5])
+
+
+def test_generate_multi_max_tokens_respected():
+    """generate_multi() stops at max_tokens limit."""
+    model = MockModel()
+    engine = Engine(model, ByteTokenizer())
+
+    prompts = [[261, 72], [261, 87, 111]]
+    for max_tokens in [1, 5, 20]:
+        results = [[] for _ in prompts]
+        for token_column, _ in engine.generate_multi(prompts, max_tokens=max_tokens, temperature=0.0):
+            for i, tok in enumerate(token_column):
+                results[i].append(tok)
+        for i, r in enumerate(results):
+            assert len(r) <= max_tokens, \
+                f"Prompt {i}: generated {len(r)} tokens, expected <= {max_tokens}"
+
+
+def test_generate_multi_single_prompt_matches_generate():
+    """generate_multi with a single prompt should match generate()."""
+    model = MockModel()
+    engine = Engine(model, ByteTokenizer())
+
+    prompt = [261, 72, 101, 108, 108, 111]
+
+    # generate()
+    gen_tokens = []
+    for token_column, _ in engine.generate(prompt, num_samples=1,
+                                            max_tokens=8, temperature=0.0, seed=42):
+        gen_tokens.append(token_column[0])
+
+    # generate_multi() with single prompt
+    multi_tokens = []
+    for token_column, _ in engine.generate_multi([prompt],
+                                                  max_tokens=8, temperature=0.0, seed=42):
+        multi_tokens.append(token_column[0])
+
+    assert gen_tokens == multi_tokens, \
+        f"Single prompt: generate {gen_tokens} != generate_multi {multi_tokens}"

@@ -154,27 +154,55 @@ def flash_attn_with_kvcache(q, k_cache, v_cache, k=None, v=None, cache_seqlens=N
 
     # SDPA fallback: manually manage KV cache
     B, T_new, H, D = q.shape
-    pos = cache_seqlens[0].item()  # assume uniform position across batch
+    is_uniform = (cache_seqlens == cache_seqlens[0]).all()
 
-    # Insert new k, v into cache (in-place, matching FA3 behavior)
+    if is_uniform:
+        # Fast path: all batch elements at same position (original logic)
+        pos = cache_seqlens[0].item()
+        if k is not None and v is not None:
+            k_cache[:, pos:pos+T_new, :, :] = k
+            v_cache[:, pos:pos+T_new, :, :] = v
+        end_pos = pos + T_new
+        k_full = k_cache[:, :end_pos, :, :]
+        v_full = v_cache[:, :end_pos, :, :]
+        q_sdpa = q.transpose(1, 2)
+        k_sdpa = k_full.transpose(1, 2)
+        v_sdpa = v_full.transpose(1, 2)
+        enable_gqa = q_sdpa.size(1) != k_sdpa.size(1)
+        y_sdpa = _sdpa_attention(q_sdpa, k_sdpa, v_sdpa, window_size, enable_gqa)
+        return y_sdpa.transpose(1, 2)
+
+    # Non-uniform path: per-element cache positions, decode only (T_new=1)
+    assert T_new == 1, f"Non-uniform cache_seqlens only supported for T_new=1, got T_new={T_new}"
+    max_pos = cache_seqlens.max().item()
+    end_pos = max_pos + 1
+
+    # Per-element cache insertion
     if k is not None and v is not None:
-        k_cache[:, pos:pos+T_new, :, :] = k
-        v_cache[:, pos:pos+T_new, :, :] = v
+        for b in range(B):
+            pos_b = cache_seqlens[b].item()
+            k_cache[b, pos_b:pos_b+1] = k[b]
+            v_cache[b, pos_b:pos_b+1] = v[b]
 
-    # Get full cache up to current position + new tokens
-    end_pos = pos + T_new
-    k_full = k_cache[:, :end_pos, :, :]
-    v_full = v_cache[:, :end_pos, :, :]
+    # Build attention with length mask
+    k_full = k_cache[:, :end_pos].transpose(1, 2)  # (B, H_kv, end_pos, D)
+    v_full = v_cache[:, :end_pos].transpose(1, 2)
+    q_sdpa = q.transpose(1, 2)  # (B, H, 1, D)
 
-    # Transpose to SDPA layout: (B, T, H, D) -> (B, H, T, D)
-    q_sdpa = q.transpose(1, 2)
-    k_sdpa = k_full.transpose(1, 2)
-    v_sdpa = v_full.transpose(1, 2)
+    # Length mask: each element attends to [0, cache_seqlens[b]+1)
+    col_idx = torch.arange(end_pos, device=q.device)
+    valid = col_idx.unsqueeze(0) < (cache_seqlens + 1).unsqueeze(1)  # (B, end_pos)
 
-    enable_gqa = q_sdpa.size(1) != k_sdpa.size(1)
-    y_sdpa = _sdpa_attention(q_sdpa, k_sdpa, v_sdpa, window_size, enable_gqa)
+    # Sliding window mask
+    window = window_size[0]
+    if window >= 0 and window < end_pos:
+        query_pos = cache_seqlens.unsqueeze(1)  # (B, 1)
+        valid = valid & ((query_pos - col_idx.unsqueeze(0)) <= window)
 
-    return y_sdpa.transpose(1, 2)  # back to (B, T, H, D)
+    attn_mask = valid.unsqueeze(1).unsqueeze(1)  # (B, 1, 1, end_pos) bool
+    enable_gqa = q_sdpa.size(1) != k_full.size(1)
+    y = F.scaled_dot_product_attention(q_sdpa, k_full, v_full, attn_mask=attn_mask, enable_gqa=enable_gqa)
+    return y.transpose(1, 2)
 
 
 # =============================================================================
