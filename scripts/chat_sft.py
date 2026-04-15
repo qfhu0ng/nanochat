@@ -66,6 +66,9 @@ parser.add_argument("--chatcore-max-sample", type=int, default=24, help="max pro
 # Data mixture
 parser.add_argument("--mmlu-epochs", type=int, default=3, help="number of epochs of MMLU in training mixture (teaches Multiple Choice)")
 parser.add_argument("--gsm8k-epochs", type=int, default=4, help="number of epochs of GSM8K in training mixture (teaches Math and Tool Use)")
+# Safety data
+parser.add_argument("--safety-data", type=str, default=None, help="path to safety conversations JSONL file (CustomJSON format)")
+parser.add_argument("--safety-epochs", type=int, default=2, help="number of epochs of safety data in training mixture (only used if --safety-data is set)")
 args = parser.parse_args()
 user_config = vars(args).copy()
 # -----------------------------------------------------------------------------
@@ -171,6 +174,11 @@ train_tasks = [
     SimpleSpelling(size=200000, split="train"), # 200K rows of Simple Spelling (e.g. spell the word 'apple')
     SpellingBee(size=80000, split="train"), # 80K rows of Spelling Bee (e.g. how many 'r' are in 'strawberry'?)
 ]
+# Optionally add safety conversations to the training mixture
+if args.safety_data:
+    if not os.path.exists(args.safety_data):
+        raise FileNotFoundError(f"Safety data file not found: {args.safety_data}")
+    train_tasks.extend([CustomJSON(filepath=args.safety_data) for _ in range(args.safety_epochs)])
 train_dataset = TaskMixture(train_tasks)
 print0(f"Training mixture: {len(train_dataset):,} rows (MMLU x{args.mmlu_epochs}, GSM8K x{args.gsm8k_epochs})")
 val_dataset = TaskMixture([
