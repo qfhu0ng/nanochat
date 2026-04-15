@@ -26,6 +26,17 @@ def _patch_missing_config_keys(model_config_kwargs):
     if "window_pattern" not in model_config_kwargs:
         model_config_kwargs["window_pattern"] = "L"
         log0(f"Patching missing window_pattern in model config to 'L'")
+    # Architecture variant fields (added in Task 3)
+    for key, default in [
+        ("mlp_variant", "relu2"),
+        ("attn_variant", "standard"),
+        ("use_learnable_norm", False),
+        ("kv_lora_rank", 256),
+        ("rope_head_dim", 64),
+    ]:
+        if key not in model_config_kwargs:
+            model_config_kwargs[key] = default
+            log0(f"Patching missing {key} in model config to {default!r}")
 
 def _patch_missing_keys(model_data, model_config):
     """Add default values for new parameters that may be missing in old checkpoints."""

@@ -52,6 +52,12 @@ parser.add_argument("--aspect-ratio", type=int, default=64, help="model_dim = de
 parser.add_argument("--head-dim", type=int, default=128, help="target head dimension for attention")
 parser.add_argument("--max-seq-len", type=int, default=2048, help="max context length")
 parser.add_argument("--window-pattern", type=str, default="SSSL", help="sliding window pattern tiled across layers: L=full, S=half context (e.g. 'SSL')")
+# Architecture variants
+parser.add_argument("--mlp-variant", type=str, default="relu2", choices=["relu2", "swiglu"], help="MLP variant: relu2 (baseline) or swiglu")
+parser.add_argument("--attn-variant", type=str, default="standard", choices=["standard", "mla"], help="attention variant: standard (baseline) or mla")
+parser.add_argument("--use-learnable-norm", action="store_true", help="use learnable RMSNorm with gamma parameter")
+parser.add_argument("--kv-lora-rank", type=int, default=256, help="MLA low-rank compression dimension")
+parser.add_argument("--rope-head-dim", type=int, default=64, help="MLA decoupled RoPE dimension")
 # Training horizon (only one used, in order of precedence)
 parser.add_argument("--num-iterations", type=int, default=-1, help="explicit number of optimization steps (-1 = disable)")
 parser.add_argument("--target-flops", type=float, default=-1.0, help="calculate num_iterations to reach target_flops (-1 = disable)")
@@ -137,6 +143,9 @@ def build_model_meta(depth):
         sequence_len=args.max_seq_len, vocab_size=vocab_size,
         n_layer=depth, n_head=num_heads, n_kv_head=num_heads, n_embd=model_dim,
         window_pattern=args.window_pattern,
+        mlp_variant=args.mlp_variant, attn_variant=args.attn_variant,
+        use_learnable_norm=args.use_learnable_norm,
+        kv_lora_rank=args.kv_lora_rank, rope_head_dim=args.rope_head_dim,
     )
     with torch.device("meta"):
         model_meta = GPT(config)
@@ -152,7 +161,17 @@ model.init_weights() # 3) All tensors get initialized
 
 # If we are resuming, overwrite the model parameters with those of the checkpoint
 base_dir = get_base_dir()
-output_dirname = args.model_tag if args.model_tag else f"d{args.depth}" # e.g. d12
+# Auto model-tag: d12, d12_swiglu, d12_mla_lnorm, etc.
+if args.model_tag:
+    output_dirname = args.model_tag
+else:
+    output_dirname = f"d{args.depth}"
+    if args.mlp_variant != "relu2":
+        output_dirname += f"_{args.mlp_variant}"
+    if args.attn_variant != "standard":
+        output_dirname += f"_{args.attn_variant}"
+    if args.use_learnable_norm:
+        output_dirname += "_lnorm"
 checkpoint_dir = os.path.join(base_dir, "base_checkpoints", output_dirname)
 resuming = args.resume_from_step != -1
 if resuming:

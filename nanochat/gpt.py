@@ -37,6 +37,12 @@ class GPTConfig:
     # Characters: L=long (full context), S=short (quarter context)
     # Examples: "L"=all full context, "SL"=alternating, "SSL"=two short then one long
     window_pattern: str = "SSSL"
+    # Architecture variants (defaults = baseline behavior, backward compatible)
+    mlp_variant: str = "relu2"         # "relu2" | "swiglu"
+    attn_variant: str = "standard"     # "standard" | "mla"
+    use_learnable_norm: bool = False   # True = RMSNorm with learnable gamma
+    kv_lora_rank: int = 256            # MLA low-rank compression dimension
+    rope_head_dim: int = 64            # MLA decoupled RoPE dimension
 
 
 def norm(x):
@@ -139,15 +145,142 @@ class MLP(nn.Module):
         return x
 
 
+class SwiGLUMLP(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        # hidden_dim ≈ 8/3 × n_embd, aligned to 128 for tensor core efficiency
+        hidden_dim = ((8 * config.n_embd + 2) // 3 + 127) // 128 * 128
+        self.w_gate = Linear(config.n_embd, hidden_dim, bias=False)
+        self.w_up   = Linear(config.n_embd, hidden_dim, bias=False)
+        self.w_down = Linear(hidden_dim, config.n_embd, bias=False)
+
+    def forward(self, x):
+        return self.w_down(F.silu(self.w_gate(x)) * self.w_up(x))
+
+
+class LearnableRMSNorm(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.gamma = nn.Parameter(torch.ones(dim))
+
+    def forward(self, x):
+        gamma = self.gamma if self.gamma.dtype == x.dtype else self.gamma.to(x.dtype)
+        return F.rms_norm(x, (x.size(-1),)) * gamma
+
+
+class MLAttention(nn.Module):
+    def __init__(self, config, layer_idx):
+        super().__init__()
+        self.layer_idx = layer_idx
+        self.n_head = config.n_head
+        self.n_kv_head = config.n_kv_head
+        self.n_embd = config.n_embd
+        self.head_dim = config.n_embd // config.n_head
+        self.kv_lora_rank = config.kv_lora_rank
+        self.rope_head_dim = config.rope_head_dim
+        self.content_head_dim = self.head_dim - self.rope_head_dim
+
+        assert self.content_head_dim > 0, "rope_head_dim must be < head_dim"
+        assert config.rope_head_dim % 2 == 0, "rope_head_dim must be even for rotary embedding pairs"
+        assert self.head_dim % 2 == 0, "head_dim must be even for RoPE"
+        assert config.kv_lora_rank > 0, "kv_lora_rank must be positive"
+        assert self.n_kv_head <= self.n_head and self.n_head % self.n_kv_head == 0
+
+        # Q: content + RoPE two paths
+        self.c_q_content = Linear(self.n_embd, self.n_head * self.content_head_dim, bias=False)
+        self.c_q_rope = Linear(self.n_embd, self.n_head * self.rope_head_dim, bias=False)
+        # KV low-rank compression
+        self.c_kv_down = Linear(self.n_embd, self.kv_lora_rank, bias=False)
+        self.c_k_up = Linear(self.kv_lora_rank, self.n_kv_head * self.content_head_dim, bias=False)
+        self.c_v_up = Linear(self.kv_lora_rank, self.n_kv_head * self.head_dim, bias=False)
+        # Decoupled RoPE key (bypasses compression)
+        self.c_k_rope = Linear(self.n_embd, self.n_kv_head * self.rope_head_dim, bias=False)
+        # Output projection
+        self.c_proj = Linear(self.n_embd, self.n_embd, bias=False)
+        # Value Embedding (same as baseline)
+        self.ve_gate_channels = 12
+        self.ve_gate = Linear(self.ve_gate_channels, self.n_kv_head, bias=False) \
+            if has_ve(layer_idx, config.n_layer) else None
+
+    def forward(self, x, ve, cos_sin, window_size, kv_cache):
+        B, T, C = x.size()
+        cos, sin = cos_sin
+
+        # Q: content + rope two paths
+        q_content = self.c_q_content(x).view(B, T, self.n_head, self.content_head_dim)
+        q_rope = self.c_q_rope(x).view(B, T, self.n_head, self.rope_head_dim)
+
+        # KV compression: x → latent → K_content, V
+        latent = self.c_kv_down(x)
+        k_content = self.c_k_up(latent).view(B, T, self.n_kv_head, self.content_head_dim)
+        v = self.c_v_up(latent).view(B, T, self.n_kv_head, self.head_dim)
+
+        # Decoupled RoPE key (bypasses compression)
+        k_rope = self.c_k_rope(x).view(B, T, self.n_kv_head, self.rope_head_dim)
+
+        # Value residual (same as baseline)
+        if ve is not None:
+            ve = ve.view(B, T, self.n_kv_head, self.head_dim)
+            gate = 3 * torch.sigmoid(self.ve_gate(x[..., :self.ve_gate_channels]))
+            v = v + gate.unsqueeze(-1) * ve
+
+        # Apply RoPE only to rope portions (slice cos/sin to rope_head_dim//2)
+        rope_half = self.rope_head_dim // 2
+        cos_rope = cos[..., :rope_half]
+        sin_rope = sin[..., :rope_half]
+        q_rope = apply_rotary_emb(q_rope, cos_rope, sin_rope)
+        k_rope = apply_rotary_emb(k_rope, cos_rope, sin_rope)
+
+        # QK norm on content and rope parts separately (with 1.2 scale, matching baseline)
+        q_content, k_content = norm(q_content), norm(k_content)
+        q_rope, k_rope = norm(q_rope), norm(k_rope)
+        q_content = q_content * 1.2
+        k_content = k_content * 1.2
+        q_rope = q_rope * 1.2
+        k_rope = k_rope * 1.2
+
+        # Concatenate content + rope → full head_dim
+        q = torch.cat([q_content, q_rope], dim=-1)  # (B, T, n_head, head_dim)
+        k = torch.cat([k_content, k_rope], dim=-1)  # (B, T, n_kv_head, head_dim)
+
+        # Flash Attention / KV cache (identical to baseline after concatenation)
+        if kv_cache is None:
+            y = flash_attn.flash_attn_func(q, k, v, causal=True, window_size=window_size)
+        else:
+            k_cache, v_cache = kv_cache.get_layer_cache(self.layer_idx)
+            y = flash_attn.flash_attn_with_kvcache(
+                q, k_cache, v_cache,
+                k=k, v=v,
+                cache_seqlens=kv_cache.cache_seqlens,
+                causal=True,
+                window_size=window_size,
+            )
+            if self.layer_idx == kv_cache.n_layers - 1:
+                kv_cache.advance(T)
+
+        y = y.contiguous().view(B, T, -1)
+        y = self.c_proj(y)
+        return y
+
+
 class Block(nn.Module):
     def __init__(self, config, layer_idx):
         super().__init__()
-        self.attn = CausalSelfAttention(config, layer_idx)
-        self.mlp = MLP(config)
+        self.attn = MLAttention(config, layer_idx) if config.attn_variant == "mla" else CausalSelfAttention(config, layer_idx)
+        self.mlp = SwiGLUMLP(config) if config.mlp_variant == "swiglu" else MLP(config)
+        # Learnable norm (None when disabled — forward falls back to parameterless norm())
+        if config.use_learnable_norm:
+            self.attn_norm = LearnableRMSNorm(config.n_embd)
+            self.mlp_norm = LearnableRMSNorm(config.n_embd)
+        else:
+            self.attn_norm = None
+            self.mlp_norm = None
 
     def forward(self, x, ve, cos_sin, window_size, kv_cache):
-        x = x + self.attn(norm(x), ve, cos_sin, window_size, kv_cache)
-        x = x + self.mlp(norm(x))
+        attn_in = self.attn_norm(x) if self.attn_norm is not None else norm(x)
+        x = x + self.attn(attn_in, ve, cos_sin, window_size, kv_cache)
+        mlp_in = self.mlp_norm(x) if self.mlp_norm is not None else norm(x)
+        x = x + self.mlp(mlp_in)
         return x
 
 
@@ -188,6 +321,13 @@ class GPT(nn.Module):
         head_dim = config.n_embd // config.n_head
         kv_dim = config.n_kv_head * head_dim
         self.value_embeds = nn.ModuleDict({str(i): nn.Embedding(padded_vocab_size, kv_dim) for i in range(config.n_layer) if has_ve(i, config.n_layer)})
+        # Learnable norm at GPT level (embed_norm after embedding, final_norm before lm_head)
+        if config.use_learnable_norm:
+            self.embed_norm = LearnableRMSNorm(config.n_embd)
+            self.final_norm = LearnableRMSNorm(config.n_embd)
+        else:
+            self.embed_norm = None
+            self.final_norm = None
         # To support meta device initialization, we init the rotary embeddings here, but it's just "fake" meta tensors only.
         # As for rotary_seq_len, these rotary embeddings are pretty small/cheap in memory,
         # so let's just over-compute them by 10X, but assert fail if we ever reach that amount.
@@ -222,12 +362,28 @@ class GPT(nn.Module):
         n_embd = self.config.n_embd
         s = 3**0.5 * n_embd**-0.5 # sqrt(3) multiplier makes sure Uniform achieves the same std as Normal
         for block in self.transformer.h:
-            torch.nn.init.uniform_(block.attn.c_q.weight, -s, s) # weights use Uniform to avoid outliers
-            torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
-            torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
-            torch.nn.init.zeros_(block.attn.c_proj.weight) # projections are zero
-            torch.nn.init.uniform_(block.mlp.c_fc.weight, -s * 0.4, s * 0.4)  # 0.4x init scale for c_fc
-            torch.nn.init.zeros_(block.mlp.c_proj.weight)
+            # Attention init (branch by type)
+            if isinstance(block.attn, MLAttention):
+                torch.nn.init.uniform_(block.attn.c_q_content.weight, -s, s)
+                torch.nn.init.uniform_(block.attn.c_q_rope.weight, -s, s)
+                torch.nn.init.uniform_(block.attn.c_kv_down.weight, -s, s)
+                torch.nn.init.uniform_(block.attn.c_k_up.weight, -s, s)
+                torch.nn.init.uniform_(block.attn.c_v_up.weight, -s, s)
+                torch.nn.init.uniform_(block.attn.c_k_rope.weight, -s, s)
+                torch.nn.init.zeros_(block.attn.c_proj.weight)
+            else:
+                torch.nn.init.uniform_(block.attn.c_q.weight, -s, s)
+                torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
+                torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
+                torch.nn.init.zeros_(block.attn.c_proj.weight)
+            # MLP init (branch by type)
+            if isinstance(block.mlp, SwiGLUMLP):
+                torch.nn.init.uniform_(block.mlp.w_gate.weight, -s * 0.4, s * 0.4)
+                torch.nn.init.uniform_(block.mlp.w_up.weight, -s * 0.4, s * 0.4)
+                torch.nn.init.zeros_(block.mlp.w_down.weight)
+            else:
+                torch.nn.init.uniform_(block.mlp.c_fc.weight, -s * 0.4, s * 0.4)
+                torch.nn.init.zeros_(block.mlp.c_proj.weight)
 
         # Per-layer scalars
         # Per-layer resid init: stronger residual at early layers, weaker at deep layers
@@ -322,11 +478,15 @@ class GPT(nn.Module):
         - Chinchilla counts exp/sum/divide in attention softmax as flops (a little sus and very tiny => we ignore)
         """
         nparams = sum(p.numel() for p in self.parameters())
-        # Exclude non-matmul params: embeddings and per-layer scalars
+        # Exclude non-matmul params: embeddings, per-layer scalars, and norm gammas
         value_embeds_numel = sum(ve.weight.numel() for ve in self.value_embeds.values())
+        norm_gamma_numel = sum(p.numel() for p in self.parameters() if p.ndim == 1
+                               and id(p) not in {id(self.resid_lambdas), id(self.x0_lambdas),
+                                                  id(self.smear_lambda), id(self.backout_lambda)})
         nparams_exclude = (self.transformer.wte.weight.numel() + value_embeds_numel +
                           self.resid_lambdas.numel() + self.x0_lambdas.numel() +
-                          self.smear_gate.weight.numel() + self.smear_lambda.numel() + self.backout_lambda.numel())
+                          self.smear_gate.weight.numel() + self.smear_lambda.numel() + self.backout_lambda.numel() +
+                          norm_gamma_numel)
         h, q, t = self.config.n_head, self.config.n_embd // self.config.n_head, self.config.sequence_len
         # Sum attention FLOPs per layer, accounting for sliding window
         attn_flops = 0
@@ -353,15 +513,22 @@ class GPT(nn.Module):
         wte = sum(p.numel() for p in self.transformer.wte.parameters())
         value_embeds = sum(p.numel() for p in self.value_embeds.parameters())
         lm_head = sum(p.numel() for p in self.lm_head.parameters())
-        transformer_matrices = sum(p.numel() for p in self.transformer.h.parameters())
+        transformer_matrices = sum(p.numel() for p in self.transformer.h.parameters() if p.ndim >= 2)
+        # Norm gammas: 1D params in transformer.h + GPT-level learnable norms
+        norm_gammas = sum(p.numel() for p in self.transformer.h.parameters() if p.ndim == 1)
+        if self.embed_norm is not None:
+            norm_gammas += self.embed_norm.gamma.numel()
+        if self.final_norm is not None:
+            norm_gammas += self.final_norm.gamma.numel()
         scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel() + self.smear_gate.weight.numel() + self.smear_lambda.numel() + self.backout_lambda.numel()
-        total = wte + value_embeds + lm_head + transformer_matrices + scalars
+        total = wte + value_embeds + lm_head + transformer_matrices + norm_gammas + scalars
         assert total == sum(p.numel() for p in self.parameters()), "Parameter count mismatch"
         return {
             'wte': wte,
             'value_embeds': value_embeds,
             'lm_head': lm_head,
             'transformer_matrices': transformer_matrices,
+            'norm_gammas': norm_gammas,
             'scalars': scalars,
             'total': total,
         }
@@ -370,15 +537,35 @@ class GPT(nn.Module):
         model_dim = self.config.n_embd
         ddp, rank, local_rank, world_size = get_dist_info()
 
-        # Separate out all parameters into groups
-        matrix_params = list(self.transformer.h.parameters())
+        # Separate transformer.h params by ndim: 2D+ → Muon, 1D → AdamW (LearnableRMSNorm gamma)
+        matrix_params = []
+        norm_gamma_params = []
+        for p in self.transformer.h.parameters():
+            if p.ndim >= 2:
+                matrix_params.append(p)
+            else:
+                norm_gamma_params.append(p)
+
+        # GPT-level learnable norm gammas (embed_norm, final_norm)
+        if self.embed_norm is not None:
+            norm_gamma_params.append(self.embed_norm.gamma)
+        if self.final_norm is not None:
+            norm_gamma_params.append(self.final_norm.gamma)
+
         value_embeds_params = list(self.value_embeds.parameters())
         embedding_params = list(self.transformer.wte.parameters())
         lm_head_params = list(self.lm_head.parameters())
         resid_params = [self.resid_lambdas]
         x0_params = [self.x0_lambdas]
         smear_params = [self.smear_gate.weight, self.smear_lambda, self.backout_lambda]
-        assert len(list(self.parameters())) == len(matrix_params) + len(embedding_params) + len(lm_head_params) + len(value_embeds_params) + len(resid_params) + len(x0_params) + len(smear_params)
+
+        # Verify no duplicate or missing parameters
+        all_params = (matrix_params + norm_gamma_params + value_embeds_params +
+                      embedding_params + lm_head_params + resid_params + x0_params + smear_params)
+        all_ids = [id(p) for p in all_params]
+        assert len(all_ids) == len(set(all_ids)), "Duplicate parameters in optimizer groups"
+        assert sum(p.numel() for p in all_params) == sum(p.numel() for p in self.parameters()), \
+            "Parameter numel mismatch: some parameters not assigned to optimizer groups"
 
         # Scale the LR for the AdamW parameters by ∝1/√dmodel (tuned for 768 dim model)
         dmodel_lr_scale = (model_dim / 768) ** -0.5
@@ -394,7 +581,13 @@ class GPT(nn.Module):
             dict(kind='adamw', params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),  # higher beta1 for x0
             dict(kind='adamw', params=smear_params, lr=0.2, betas=(0.8, 0.95), eps=1e-10, weight_decay=0.0),
         ]
-        # Muon groups (matrix params, grouped by shape for stacking)
+        # Norm gamma params (1D, AdamW) — only present when use_learnable_norm=True
+        if norm_gamma_params:
+            param_groups.append(
+                dict(kind='adamw', params=norm_gamma_params, lr=scalar_lr * 0.1,
+                     betas=(0.8, 0.95), eps=1e-10, weight_decay=0.0)
+            )
+        # Muon groups (matrix params only, all ndim>=2, grouped by shape for stacking)
         for shape in sorted({p.shape for p in matrix_params}):
             group_params = [p for p in matrix_params if p.shape == shape]
             param_groups.append(dict(
@@ -422,7 +615,7 @@ class GPT(nn.Module):
         # Embed the tokens
         x = self.transformer.wte(idx) # embed current token
         x = x.to(COMPUTE_DTYPE) # ensure activations are in compute dtype (no-op usually, but active for fp16 code path)
-        x = norm(x)
+        x = self.embed_norm(x) if self.embed_norm is not None else norm(x)
 
         # Smear: mix previous token's embedding into current position (cheap bigram info)
         if kv_cache is None:
@@ -457,7 +650,7 @@ class GPT(nn.Module):
         # Subtract mid-layer residual to remove low-level features before logit projection
         if x_backout is not None:
             x = x - self.backout_lambda.to(x.dtype) * x_backout
-        x = norm(x)
+        x = self.final_norm(x) if self.final_norm is not None else norm(x)
 
         # Forward the lm_head (compute logits)
         softcap = 15 # smoothly cap the logits to the range [-softcap, softcap]
