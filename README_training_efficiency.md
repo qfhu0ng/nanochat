@@ -198,7 +198,7 @@ for group in optimizer.param_groups:
 | 2 | reduce-overhead | `--compile-mode reduce-overhead` | 42 |
 | 3 | ns_steps 5->3 | `--ns-steps 5 --ns-steps-final 3 --ns-steps-warmup 80` | 42 |
 
-注：reduce-overhead 在运行时因 CUDA 版本不匹配导致 segfault（见下方分析），未产生有效数据。组合实验因此取消。
+注：reduce-overhead 在运行时因 FA3 custom op 不兼容 CUDA graph capture 导致 segfault（见下方分析），未产生有效数据。组合实验因此取消。
 
 ### 性能对比（step >= 100，n=900）
 
@@ -227,19 +227,28 @@ ns_steps 5->3 全程略差于 baseline，差距约 0.003-0.007 bpb。
 
 **现象**: `--compile-mode reduce-overhead` 在首次训练步骤时触发 Segmentation fault。模型初始化、参数打印、数据加载均正常完成，崩溃发生在 `torch.compile` 首次 forward 的 CUDA graph 捕获阶段。
 
-**根因分析**: 实验环境存在 **CUDA 版本不匹配**：
+**排查过程**: 使用 `python -Xfaulthandler` 复现，获得完整 C-level stack trace。关键调用链：
 
-| 组件 | 版本 |
-|------|------|
-| PyTorch 编译时 CUDA | **12.8** (`torch 2.9.1+cu128`) |
-| 系统 CUDA Driver | **12.6** (`nvidia-smi: 560.35.03`) |
-| nvcc | **12.6** |
+```
+base_train.py:562  (model forward)
+→ cudagraph_trees.cudagraphify → cudagraph_trees.run
+→ partition_0 (inductor 生成的融合代码)
+→ torch.ops.flash_attn_3._flash_attn_forward  ← segfault 发生在此处
+→ custom_ops.backend_impl
+```
 
-`mode="reduce-overhead"` 启用 CUDA graph 捕获，对 CUDA runtime 与 driver 的版本一致性要求高于普通 kernel 调用。PyTorch 以 CUDA 12.8 编译，其 graph capture API 可能调用了 12.6 driver 不支持的功能，导致 segfault。普通 forward/backward 正常（CUDA 向后兼容），但 graph capture 路径更敏感。
+**根因分析**: `mode="reduce-overhead"` 让 inductor 将整个 forward 编译为一个 CUDA graph。inductor 生成的代码 `partition_0` 中直接调用了 `torch.ops.flash_attn_3._flash_attn_forward`（FA3 custom op）。CUDA graph capture 要求图中所有 kernel 都是 graph-safe 的（不能有动态显存分配、host-device 同步等）。FA3 是第三方预编译 CUDA extension（从 HuggingFace hub 下载的 `.so`），其 CUDA kernel 未声明 CUDA graph 兼容性，在 graph capture 模式下触发 segfault。
 
-**验证建议**: 在 CUDA 12.8 driver 的环境上重试 `reduce-overhead`，预期可正常工作。
+**环境信息**:
+- FA3: `varunneal/flash-attention-3` (HF hub, cu128 预编译)
+- PyTorch: `2.9.1+cu128`
+- CUDA Driver: `12.6` (nvidia-smi 560.35.03)
+- 注：driver 12.6 vs runtime 12.8 的版本不匹配可能是加剧因素，但主要原因是 FA3 custom op 不支持 graph capture
 
-**结论**: segfault 由 CUDA 版本不匹配导致，非代码或算法问题。在 driver/runtime 版本一致的环境上，`reduce-overhead` 应可正常启用。
+**结论**: FA3 custom op 不兼容 CUDA graph capture，导致 `reduce-overhead` 不可用。可能的解决路径：
+1. 等待 FA3 官方添加 CUDA graph 支持
+2. 回退到 PyTorch SDPA（放弃 FA3 性能优势）
+3. 在 CUDA driver 版本匹配的环境上重试（排除 driver 因素后确认是否纯 FA3 问题）
 
 ---
 
@@ -251,7 +260,7 @@ ns_steps 5->3 全程略差于 baseline，差距约 0.003-0.007 bpb。
 
 | 优化 | 结果 | 原因 |
 |------|------|------|
-| reduce-overhead (CUDA graph) | segfault | CUDA 版本不匹配（PyTorch cu128 vs driver 12.6） |
+| reduce-overhead (CUDA graph) | segfault | FA3 custom op 不兼容 CUDA graph capture（driver 版本不匹配可能加剧） |
 | ns_steps 5->3 调度 | +0.04% 吞吐（噪声级别） | d12 模型小，PE matmul 在总计算中占比 <2% |
 | FP8 (已有分析) | d12 预期 0-3% | d12 更偏 memory-bandwidth-bound |
 
@@ -267,21 +276,21 @@ ns_steps 5->3 全程略差于 baseline，差距约 0.003-0.007 bpb。
 ### 推荐
 
 - **d12**: 保持默认配置，无需额外优化参数
-- **d24+**: 建议尝试 FP8 (`--fp8`)，已有数据支持 ~5% 净收益；在 CUDA 版本匹配的环境上可再试 `reduce-overhead`
+- **d24+**: 建议尝试 FP8 (`--fp8`)，已有数据支持 ~5% 净收益；待 FA3 支持 CUDA graph 后可再试 `reduce-overhead`
 - **多卡 DDP**: ns_steps 调度在通信占比更高的场景下可能有效（PE matmul 的计算在通信 overlap 中被"隐藏"的程度不同）
 
 ---
 
 ## 8. 局限性
 
-1. **reduce-overhead 因 CUDA 版本不匹配而 segfault**: 实验环境 PyTorch cu128 vs driver 12.6，需在版本一致的环境重试
+1. **reduce-overhead 因 FA3 不兼容 CUDA graph 而 segfault**: FA3 custom op 在 graph capture 模式下崩溃，CUDA driver 版本不匹配可能加剧
 2. **ns_steps 调度在 d12 上无效**: PE matmul 占比太小；在更大模型上可能有效但未验证
 3. **单卡实验**: 多卡 DDP 场景下通信开销占比不同，优化效果可能变化
 4. **统计噪声**: 1000 步训练的 ms/step 标准差约 5ms（~0.5%），微小的优化可能被淹没
 
 ### 后续可改进方向
 
-- 在 CUDA driver >= 12.8 的环境上重试 `reduce-overhead`（预期可正常工作，~3-8% 提升）
+- 待 FA3 添加 CUDA graph 支持后重试 `reduce-overhead`；或在 CUDA driver 版本匹配的环境上重试以排除 driver 因素
 - 在 d24+ 规模上重新验证 ns_steps 调度和 FP8 组合效果
 - 探索 `max-autotune-no-cudagraphs` 模式（Triton kernel 自动调优，不依赖 CUDA graph）
 
