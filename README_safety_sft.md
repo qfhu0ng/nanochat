@@ -144,7 +144,7 @@ python -m scripts.chat_sft \
 
 **现象**：`chat_sft.py` 启动即调用 `load_model("base", ...)`，本地 macOS 和远程服务器均无预训练模型，导致 SFT 无法启动。
 
-**解决**：本地可通过 `bash runs/runcpu.sh` 在 CPU/MPS 上跑出一个小型 checkpoint（约 30 分钟），或在远程 GPU 服务器完成预训练后再补做 smoke test。当前已完成数据格式验证（CustomJSON 加载零错误），SFT smoke test 待 checkpoint 就绪后补充。
+**解决**：在 Vast.ai H100 SXM 80GB 上完成 pretrain d12 5000 steps 后，分别跑了 SFT baseline 和 SFT + safety。结果见下方"SFT 训练结果"章节。
 
 ### 问题 3：质量评分区分度不足
 
@@ -169,8 +169,8 @@ python -m scripts.chat_sft \
 | 场景覆盖 | `.meta.jsonl` 统计 | 8 类均有覆盖 | **全覆盖，通过** |
 | 内容质量 | 人工抽检 | 拒绝合理、无有害信息泄露 | **通过** |
 | 可追溯 | 三层文件齐全 | 每层行数递减且可解释 | **通过** |
-| Pipeline 接入 | SFT 训练 | 无报错，loss 正常 | **待 checkpoint 就绪** |
-| 向后兼容 | 不带 `--safety-data` | 行为与原版一致 | **通过（代码分析）** |
+| Pipeline 接入 | SFT 训练 | 无报错，loss 正常 | **通过** |
+| 向后兼容 | 不带 `--safety-data` | 行为与原版一致 | **通过** |
 | 自动化测试 | pytest | 12/12 通过 | **通过** |
 
 ## 11. 文件清单
@@ -187,7 +187,34 @@ python -m scripts.chat_sft \
 | `tests/test_safety_data_schema.py` | 新增 | 数据格式验证测试 |
 | `README_safety_sft.md` | 新增 | 本文档 |
 
-## 12. 断点续传与错误处理
+## 12. SFT 训练结果
+
+在 Vast.ai H100 SXM 80GB 上完成了完整训练 pipeline：
+
+### Pretrain
+- 模型：d12（12 层，768 dim，6 heads，~286M 参数）
+- 训练：5000 steps，total-batch-size=524288，seq-len=2048
+- 结果：val bpb = 0.868，耗时 89.5 分钟
+
+### SFT 对比
+
+| 指标 | SFT baseline | SFT + safety |
+|------|-------------|-------------|
+| 训练数据 | SmolTalk + MMLU×3 + GSM8K×4 | 同左 + safety×2 epoch |
+| 步数 | 94 | 94 |
+| 最终 val bpb | **0.446** | **0.447** |
+| 耗时 | 1.4 min | 1.4 min |
+
+**结论**：混入 600 条 safety 数据（2 epoch）后，val bpb 仅增加 0.001（0.446 → 0.447），模型通用能力基本无损。
+
+### 训练日志
+
+完整训练日志保存在 `dev/logs/` 目录下：
+- `pretrain_d12_5000.log` — pretrain 全量日志
+- `sft_baseline_1500.log` — SFT baseline 日志
+- `sft_safety_1500.log` — SFT + safety 日志
+
+## 13. 断点续传与错误处理
 
 脚本支持 `--resume` 从中断处继续生成：
 

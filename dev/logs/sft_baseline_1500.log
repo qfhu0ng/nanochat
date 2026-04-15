@@ -1,0 +1,132 @@
+Autodetected device type: cuda
+2026-04-15 07:47:19,613 - nanochat.common - [32m[1mINFO[0m - Distributed world size: 1
+COMPUTE_DTYPE: torch.bfloat16 (auto-detected: CUDA SM 90 (bf16 supported))
+GPU: NVIDIA H100 80GB HBM3 | Peak FLOPS (BF16): 9.89e+14
+2026-04-15 07:47:19,613 - nanochat.checkpoint_manager - [32m[1mINFO[0m - No model tag provided, guessing model tag: d12
+2026-04-15 07:47:19,614 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Loading model from /workspace/nanochat_data/base_checkpoints/d12 with step 5000
+2026-04-15 07:47:20,158 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Building model with config: {'sequence_len': 2048, 'vocab_size': 32768, 'n_layer': 12, 'n_head': 6, 'n_kv_head': 6, 'n_embd': 768, 'window_pattern': 'SSSL'}
+Using max_seq_len=2048
+Using device_batch_size=16
+Using total_batch_size=524288
+Inherited embedding_lr=0.3 from pretrained checkpoint
+Inherited unembedding_lr=0.008 from pretrained checkpoint
+Inherited matrix_lr=0.02 from pretrained checkpoint
+Tokens / micro-batch / rank: 16 x 2048 = 32,768
+Tokens / micro-batch: 32,768
+Total batch size 524,288 => gradient accumulation steps: 16
+Scaling the LR for the AdamW parameters ∝1/√(768/768) = 1.000000
+2026-04-15 07:47:21,285 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Loading optimizer state from /workspace/nanochat_data/base_checkpoints/d12/optim_005000_rank0.pt
+Loaded optimizer state from pretrained checkpoint (momentum buffers only, LRs reset)
+Generating train split:   0%|          | 0/460341 [00:00<?, ? examples/s]Generating train split:   2%|▏         | 7000/460341 [00:00<00:07, 60620.97 examples/s]Generating train split:   3%|▎         | 14000/460341 [00:00<00:07, 62226.53 examples/s]Generating train split:   5%|▌         | 25000/460341 [00:00<00:06, 64226.44 examples/s]Generating train split:   7%|▋         | 32000/460341 [00:00<00:06, 65170.06 examples/s]Generating train split:   9%|▉         | 42000/460341 [00:00<00:05, 72152.96 examples/s]Generating train split:  11%|█         | 50000/460341 [00:00<00:06, 66390.88 examples/s]Generating train split:  12%|█▏        | 57000/460341 [00:00<00:06, 60711.62 examples/s]Generating train split:  14%|█▍        | 64000/460341 [00:01<00:07, 49561.27 examples/s]Generating train split:  15%|█▌        | 70000/460341 [00:01<00:08, 45225.88 examples/s]Generating train split:  17%|█▋        | 76000/460341 [00:01<00:09, 40566.26 examples/s]Generating train split:  18%|█▊        | 82000/460341 [00:01<00:10, 37244.31 examples/s]Generating train split:  19%|█▊        | 86000/460341 [00:01<00:10, 35704.59 examples/s]Generating train split:  20%|█▉        | 90000/460341 [00:01<00:10, 34254.59 examples/s]Generating train split:  20%|██        | 94000/460341 [00:02<00:10, 33693.55 examples/s]Generating train split:  21%|██▏       | 98000/460341 [00:02<00:11, 31727.87 examples/s]Generating train split:  22%|██▏       | 102000/460341 [00:02<00:10, 32766.98 examples/s]Generating train split:  23%|██▎       | 106000/460341 [00:02<00:10, 32950.57 examples/s]Generating train split:  24%|██▍       | 110000/460341 [00:02<00:10, 33255.37 examples/s]Generating train split:  25%|██▍       | 114000/460341 [00:02<00:10, 32724.60 examples/s]Generating train split:  26%|██▌       | 118086/460341 [00:02<00:10, 31558.79 examples/s]Generating train split:  27%|██▋       | 123086/460341 [00:02<00:09, 34127.50 examples/s]Generating train split:  28%|██▊       | 128086/460341 [00:03<00:09, 33991.39 examples/s]Generating train split:  29%|██▉       | 134086/460341 [00:03<00:08, 37328.16 examples/s]Generating train split:  30%|███       | 140086/460341 [00:03<00:07, 40915.49 examples/s]Generating train split:  32%|███▏      | 145086/460341 [00:03<00:07, 40421.20 examples/s]Generating train split:  33%|███▎      | 151086/460341 [00:03<00:08, 36490.16 examples/s]Generating train split:  34%|███▎      | 155086/460341 [00:03<00:08, 34639.64 examples/s]Generating train split:  35%|███▍      | 159086/460341 [00:03<00:09, 33120.39 examples/s]Generating train split:  35%|███▌      | 163086/460341 [00:04<00:09, 31572.75 examples/s]Generating train split:  36%|███▋      | 167086/460341 [00:04<00:09, 31339.83 examples/s]Generating train split:  37%|███▋      | 171086/460341 [00:04<00:09, 30849.43 examples/s]Generating train split:  38%|███▊      | 175086/460341 [00:04<00:09, 31514.64 examples/s]Generating train split:  39%|███▉      | 179086/460341 [00:04<00:09, 29821.87 examples/s]Generating train split:  40%|███▉      | 183086/460341 [00:04<00:08, 30808.17 examples/s]Generating train split:  41%|████      | 187086/460341 [00:04<00:08, 30844.38 examples/s]Generating train split:  42%|████▏     | 191086/460341 [00:04<00:08, 30778.14 examples/s]Generating train split:  42%|████▏     | 195086/460341 [00:05<00:09, 29293.38 examples/s]Generating train split:  43%|████▎     | 199086/460341 [00:05<00:08, 30025.43 examples/s]Generating train split:  44%|████▍     | 203086/460341 [00:05<00:08, 29825.20 examples/s]Generating train split:  45%|████▍     | 207086/460341 [00:05<00:08, 28873.89 examples/s]Generating train split:  46%|████▌     | 211086/460341 [00:05<00:09, 27258.08 examples/s]Generating train split:  47%|████▋     | 215086/460341 [00:05<00:08, 28074.55 examples/s]Generating train split:  48%|████▊     | 219086/460341 [00:05<00:08, 29022.98 examples/s]Generating train split:  48%|████▊     | 223086/460341 [00:06<00:08, 28528.05 examples/s]Generating train split:  49%|████▉     | 227086/460341 [00:06<00:08, 28493.52 examples/s]Generating train split:  50%|█████     | 231171/460341 [00:06<00:08, 27452.74 examples/s]Generating train split:  51%|█████     | 235171/460341 [00:06<00:07, 28316.44 examples/s]Generating train split:  52%|█████▏    | 239171/460341 [00:06<00:07, 28967.26 examples/s]Generating train split:  53%|█████▎    | 243171/460341 [00:06<00:07, 30262.91 examples/s]Generating train split:  54%|█████▎    | 247171/460341 [00:06<00:06, 31397.22 examples/s]Generating train split:  55%|█████▍    | 251171/460341 [00:07<00:06, 30950.64 examples/s]Generating train split:  55%|█████▌    | 255171/460341 [00:07<00:06, 30784.53 examples/s]Generating train split:  56%|█████▋    | 259171/460341 [00:07<00:06, 30368.02 examples/s]Generating train split:  57%|█████▋    | 264171/460341 [00:07<00:06, 28893.57 examples/s]Generating train split:  58%|█████▊    | 268171/460341 [00:07<00:06, 28891.95 examples/s]Generating train split:  59%|█████▉    | 272171/460341 [00:07<00:06, 29931.64 examples/s]Generating train split:  60%|█████▉    | 276171/460341 [00:07<00:06, 30002.07 examples/s]Generating train split:  61%|██████    | 280171/460341 [00:08<00:06, 28780.07 examples/s]Generating train split:  62%|██████▏   | 284171/460341 [00:08<00:06, 28869.47 examples/s]Generating train split:  63%|██████▎   | 288171/460341 [00:08<00:05, 29272.33 examples/s]Generating train split:  63%|██████▎   | 292171/460341 [00:08<00:05, 28958.05 examples/s]Generating train split:  64%|██████▍   | 296171/460341 [00:08<00:06, 27067.77 examples/s]Generating train split:  65%|██████▌   | 300171/460341 [00:08<00:05, 28667.25 examples/s]Generating train split:  66%|██████▌   | 304171/460341 [00:08<00:05, 30205.10 examples/s]Generating train split:  67%|██████▋   | 308171/460341 [00:08<00:05, 30271.89 examples/s]Generating train split:  68%|██████▊   | 312171/460341 [00:09<00:05, 27720.55 examples/s]Generating train split:  69%|██████▊   | 316171/460341 [00:09<00:05, 28000.44 examples/s]Generating train split:  70%|██████▉   | 320171/460341 [00:09<00:04, 29022.61 examples/s]Generating train split:  70%|███████   | 324171/460341 [00:09<00:04, 29161.40 examples/s]Generating train split:  71%|███████▏  | 328171/460341 [00:09<00:04, 26824.42 examples/s]Generating train split:  72%|███████▏  | 332171/460341 [00:09<00:04, 27487.37 examples/s]Generating train split:  73%|███████▎  | 336171/460341 [00:10<00:04, 28621.21 examples/s]Generating train split:  74%|███████▍  | 340171/460341 [00:10<00:04, 29274.92 examples/s]Generating train split:  75%|███████▍  | 344171/460341 [00:10<00:03, 29799.87 examples/s]Generating train split:  76%|███████▌  | 348256/460341 [00:10<00:04, 27789.62 examples/s]Generating train split:  77%|███████▋  | 352256/460341 [00:10<00:03, 28931.95 examples/s]Generating train split:  77%|███████▋  | 356256/460341 [00:10<00:03, 29521.38 examples/s]Generating train split:  78%|███████▊  | 360256/460341 [00:10<00:03, 30133.35 examples/s]Generating train split:  79%|███████▉  | 364256/460341 [00:10<00:03, 29579.91 examples/s]Generating train split:  80%|███████▉  | 368256/460341 [00:11<00:03, 30470.42 examples/s]Generating train split:  81%|████████  | 372256/460341 [00:11<00:02, 29698.98 examples/s]Generating train split:  82%|████████▏ | 376256/460341 [00:11<00:02, 30145.94 examples/s]Generating train split:  83%|████████▎ | 381256/460341 [00:11<00:02, 27676.60 examples/s]Generating train split:  84%|████████▎ | 385256/460341 [00:11<00:02, 27951.69 examples/s]Generating train split:  85%|████████▍ | 389256/460341 [00:11<00:02, 28979.38 examples/s]Generating train split:  85%|████████▌ | 393256/460341 [00:12<00:02, 26596.42 examples/s]Generating train split:  86%|████████▋ | 397256/460341 [00:12<00:02, 27758.12 examples/s]Generating train split:  87%|████████▋ | 401256/460341 [00:12<00:02, 28437.99 examples/s]Generating train split:  88%|████████▊ | 405256/460341 [00:12<00:01, 28759.33 examples/s]Generating train split:  89%|████████▉ | 409256/460341 [00:12<00:01, 26844.05 examples/s]Generating train split:  90%|████████▉ | 413256/460341 [00:12<00:01, 28081.04 examples/s]Generating train split:  91%|█████████ | 417256/460341 [00:12<00:01, 28040.57 examples/s]Generating train split:  92%|█████████▏| 421256/460341 [00:12<00:01, 28336.02 examples/s]Generating train split:  92%|█████████▏| 425256/460341 [00:13<00:01, 26040.48 examples/s]Generating train split:  93%|█████████▎| 429256/460341 [00:13<00:01, 27562.51 examples/s]Generating train split:  94%|█████████▍| 433256/460341 [00:13<00:00, 28880.24 examples/s]Generating train split:  95%|█████████▍| 437256/460341 [00:13<00:00, 29575.99 examples/s]Generating train split:  96%|█████████▌| 441256/460341 [00:13<00:00, 29896.12 examples/s]Generating train split:  97%|█████████▋| 445256/460341 [00:13<00:00, 29849.49 examples/s]Generating train split:  98%|█████████▊| 451256/460341 [00:13<00:00, 34776.63 examples/s]Generating train split:  99%|█████████▉| 457256/460341 [00:14<00:00, 36607.04 examples/s]Generating train split: 100%|██████████| 460341/460341 [00:14<00:00, 32564.40 examples/s]
+Generating test split:   0%|          | 0/24229 [00:00<?, ? examples/s]Generating test split:  17%|█▋        | 4000/24229 [00:00<00:00, 30965.30 examples/s]Generating test split:  37%|███▋      | 9000/24229 [00:00<00:00, 39089.09 examples/s]Generating test split:  54%|█████▎    | 13000/24229 [00:00<00:00, 34533.00 examples/s]Generating test split:  70%|███████   | 17000/24229 [00:00<00:00, 33676.59 examples/s]Generating test split:  87%|████████▋ | 21000/24229 [00:00<00:00, 31675.57 examples/s]Generating test split: 100%|██████████| 24229/24229 [00:00<00:00, 34403.14 examples/s]
+Generating test split:   0%|          | 0/14042 [00:00<?, ? examples/s]Generating test split: 100%|██████████| 14042/14042 [00:00<00:00, 493207.86 examples/s]
+Generating validation split:   0%|          | 0/1531 [00:00<?, ? examples/s]Generating validation split: 100%|██████████| 1531/1531 [00:00<00:00, 182537.29 examples/s]
+Generating dev split:   0%|          | 0/285 [00:00<?, ? examples/s]Generating dev split: 100%|██████████| 285/285 [00:00<00:00, 55413.34 examples/s]
+Generating auxiliary_train split:   0%|          | 0/99842 [00:00<?, ? examples/s]Generating auxiliary_train split:  19%|█▉        | 19000/99842 [00:00<00:00, 176986.64 examples/s]Generating auxiliary_train split:  43%|████▎     | 43000/99842 [00:00<00:00, 209173.20 examples/s]Generating auxiliary_train split:  78%|███████▊  | 78000/99842 [00:00<00:00, 265391.34 examples/s]Generating auxiliary_train split: 100%|██████████| 99842/99842 [00:00<00:00, 263183.90 examples/s]
+Generating train split:   0%|          | 0/7473 [00:00<?, ? examples/s]Generating train split: 100%|██████████| 7473/7473 [00:00<00:00, 265186.93 examples/s]
+Generating test split:   0%|          | 0/1319 [00:00<?, ? examples/s]Generating test split: 100%|██████████| 1319/1319 [00:00<00:00, 164798.54 examples/s]
+Downloading https://raw.githubusercontent.com/dwyl/english-words/refs/heads/master/words_alpha.txt...
+Downloaded to /workspace/nanochat_data/words_alpha.txt
+Training mixture: 1,071,759 rows (MMLU x3, GSM8K x4)
+Step 00000 | Validation bpb: 0.6549
+step 00001 (1.13%) | loss: 1.270088 | lrm: 1.00 | dt: 26782.22ms | tok/sec: 19,575 | mfu: 1.50 | epoch: 1 | total time: 0.00m
+step 00002 (2.20%) | loss: 1.575254 | lrm: 1.00 | dt: 983.32ms | tok/sec: 533,181 | mfu: 40.96 | epoch: 1 | total time: 0.00m
+step 00003 (3.27%) | loss: 1.677126 | lrm: 1.00 | dt: 986.69ms | tok/sec: 531,360 | mfu: 40.82 | epoch: 1 | total time: 0.00m
+step 00004 (4.33%) | loss: 1.715960 | lrm: 1.00 | dt: 990.47ms | tok/sec: 529,334 | mfu: 40.66 | epoch: 1 | total time: 0.00m
+step 00005 (5.40%) | loss: 1.764529 | lrm: 1.00 | dt: 988.15ms | tok/sec: 530,572 | mfu: 40.76 | epoch: 1 | total time: 0.00m
+step 00006 (6.47%) | loss: 1.808604 | lrm: 1.00 | dt: 986.28ms | tok/sec: 531,582 | mfu: 40.83 | epoch: 1 | total time: 0.00m
+step 00007 (7.53%) | loss: 1.791682 | lrm: 1.00 | dt: 988.27ms | tok/sec: 530,508 | mfu: 40.75 | epoch: 1 | total time: 0.00m
+step 00008 (8.60%) | loss: 1.789244 | lrm: 1.00 | dt: 988.50ms | tok/sec: 530,388 | mfu: 40.74 | epoch: 1 | total time: 0.00m
+step 00009 (9.67%) | loss: 1.792777 | lrm: 1.00 | dt: 1047.97ms | tok/sec: 500,287 | mfu: 38.43 | epoch: 1 | total time: 0.00m
+step 00010 (10.73%) | loss: 1.783847 | lrm: 1.00 | dt: 1000.26ms | tok/sec: 524,154 | mfu: 40.26 | epoch: 1 | total time: 0.00m
+step 00011 (11.80%) | loss: 1.788869 | lrm: 1.00 | dt: 1002.32ms | tok/sec: 523,073 | mfu: 40.18 | epoch: 1 | total time: 0.02m
+step 00012 (12.87%) | loss: 1.777097 | lrm: 1.00 | dt: 989.45ms | tok/sec: 529,877 | mfu: 40.70 | epoch: 1 | total time: 0.03m
+step 00013 (13.93%) | loss: 1.746613 | lrm: 1.00 | dt: 988.71ms | tok/sec: 530,274 | mfu: 40.73 | epoch: 1 | total time: 0.05m
+step 00014 (15.00%) | loss: 1.743751 | lrm: 1.00 | dt: 989.18ms | tok/sec: 530,023 | mfu: 40.71 | epoch: 1 | total time: 0.07m
+step 00015 (16.07%) | loss: 1.751046 | lrm: 1.00 | dt: 988.42ms | tok/sec: 530,430 | mfu: 40.74 | epoch: 1 | total time: 0.08m
+step 00016 (17.13%) | loss: 1.758359 | lrm: 1.00 | dt: 994.57ms | tok/sec: 527,150 | mfu: 40.49 | epoch: 1 | total time: 0.10m
+step 00017 (18.20%) | loss: 1.739147 | lrm: 1.00 | dt: 989.31ms | tok/sec: 529,954 | mfu: 40.71 | epoch: 1 | total time: 0.12m
+step 00018 (19.27%) | loss: 1.724998 | lrm: 1.00 | dt: 987.62ms | tok/sec: 530,857 | mfu: 40.78 | epoch: 1 | total time: 0.13m
+step 00019 (20.33%) | loss: 1.729565 | lrm: 1.00 | dt: 986.70ms | tok/sec: 531,355 | mfu: 40.82 | epoch: 1 | total time: 0.15m
+step 00020 (21.40%) | loss: 1.709448 | lrm: 1.00 | dt: 993.37ms | tok/sec: 527,787 | mfu: 40.54 | epoch: 1 | total time: 0.17m
+step 00021 (22.47%) | loss: 1.693894 | lrm: 1.00 | dt: 984.52ms | tok/sec: 532,531 | mfu: 40.91 | epoch: 1 | total time: 0.18m
+step 00022 (23.53%) | loss: 1.685010 | lrm: 1.00 | dt: 990.45ms | tok/sec: 529,343 | mfu: 40.66 | epoch: 1 | total time: 0.20m
+step 00023 (24.60%) | loss: 1.691015 | lrm: 1.00 | dt: 988.84ms | tok/sec: 530,203 | mfu: 40.73 | epoch: 1 | total time: 0.21m
+step 00024 (25.67%) | loss: 1.672980 | lrm: 1.00 | dt: 988.28ms | tok/sec: 530,504 | mfu: 40.75 | epoch: 1 | total time: 0.23m
+step 00025 (26.73%) | loss: 1.683586 | lrm: 1.00 | dt: 990.68ms | tok/sec: 529,220 | mfu: 40.65 | epoch: 1 | total time: 0.25m
+step 00026 (27.80%) | loss: 1.681825 | lrm: 1.00 | dt: 983.15ms | tok/sec: 533,272 | mfu: 40.96 | epoch: 1 | total time: 0.26m
+step 00027 (28.87%) | loss: 1.659492 | lrm: 1.00 | dt: 987.62ms | tok/sec: 530,857 | mfu: 40.78 | epoch: 1 | total time: 0.28m
+step 00028 (29.93%) | loss: 1.665001 | lrm: 1.00 | dt: 988.22ms | tok/sec: 530,536 | mfu: 40.75 | epoch: 1 | total time: 0.30m
+step 00029 (31.00%) | loss: 1.653439 | lrm: 1.00 | dt: 986.23ms | tok/sec: 531,606 | mfu: 40.84 | epoch: 1 | total time: 0.31m
+step 00030 (32.07%) | loss: 1.649953 | lrm: 1.00 | dt: 989.08ms | tok/sec: 530,077 | mfu: 40.72 | epoch: 1 | total time: 0.33m
+step 00031 (33.13%) | loss: 1.632405 | lrm: 1.00 | dt: 989.57ms | tok/sec: 529,814 | mfu: 40.70 | epoch: 1 | total time: 0.35m
+step 00032 (34.20%) | loss: 1.630555 | lrm: 1.00 | dt: 989.18ms | tok/sec: 530,022 | mfu: 40.71 | epoch: 1 | total time: 0.36m
+step 00033 (35.27%) | loss: 1.635463 | lrm: 1.00 | dt: 988.42ms | tok/sec: 530,430 | mfu: 40.74 | epoch: 1 | total time: 0.38m
+step 00034 (36.33%) | loss: 1.645780 | lrm: 1.00 | dt: 988.91ms | tok/sec: 530,166 | mfu: 40.72 | epoch: 1 | total time: 0.40m
+step 00035 (37.40%) | loss: 1.631601 | lrm: 1.00 | dt: 988.84ms | tok/sec: 530,204 | mfu: 40.73 | epoch: 1 | total time: 0.41m
+step 00036 (38.47%) | loss: 1.621839 | lrm: 1.00 | dt: 989.75ms | tok/sec: 529,717 | mfu: 40.69 | epoch: 1 | total time: 0.43m
+step 00037 (39.53%) | loss: 1.617924 | lrm: 1.00 | dt: 988.52ms | tok/sec: 530,377 | mfu: 40.74 | epoch: 1 | total time: 0.45m
+step 00038 (40.60%) | loss: 1.599894 | lrm: 1.00 | dt: 997.09ms | tok/sec: 525,816 | mfu: 40.39 | epoch: 1 | total time: 0.46m
+step 00039 (41.67%) | loss: 1.611123 | lrm: 1.00 | dt: 991.27ms | tok/sec: 528,907 | mfu: 40.63 | epoch: 1 | total time: 0.48m
+step 00040 (42.73%) | loss: 1.591580 | lrm: 1.00 | dt: 991.08ms | tok/sec: 529,007 | mfu: 40.64 | epoch: 1 | total time: 0.49m
+step 00041 (43.80%) | loss: 1.599887 | lrm: 1.00 | dt: 990.82ms | tok/sec: 529,145 | mfu: 40.65 | epoch: 1 | total time: 0.51m
+step 00042 (44.87%) | loss: 1.586921 | lrm: 1.00 | dt: 990.57ms | tok/sec: 529,278 | mfu: 40.66 | epoch: 1 | total time: 0.53m
+step 00043 (45.93%) | loss: 1.582103 | lrm: 1.00 | dt: 988.16ms | tok/sec: 530,570 | mfu: 40.76 | epoch: 1 | total time: 0.54m
+step 00044 (47.00%) | loss: 1.580093 | lrm: 1.00 | dt: 992.35ms | tok/sec: 528,329 | mfu: 40.58 | epoch: 1 | total time: 0.56m
+step 00045 (48.07%) | loss: 1.564997 | lrm: 1.00 | dt: 988.71ms | tok/sec: 530,276 | mfu: 40.73 | epoch: 1 | total time: 0.58m
+step 00046 (49.13%) | loss: 1.556511 | lrm: 1.00 | dt: 990.48ms | tok/sec: 529,327 | mfu: 40.66 | epoch: 1 | total time: 0.59m
+step 00047 (50.20%) | loss: 1.538530 | lrm: 1.00 | dt: 991.34ms | tok/sec: 528,868 | mfu: 40.62 | epoch: 1 | total time: 0.61m
+step 00048 (51.27%) | loss: 1.533854 | lrm: 0.97 | dt: 991.55ms | tok/sec: 528,755 | mfu: 40.62 | epoch: 1 | total time: 0.63m
+step 00049 (52.33%) | loss: 1.530590 | lrm: 0.95 | dt: 987.83ms | tok/sec: 530,749 | mfu: 40.77 | epoch: 1 | total time: 0.64m
+step 00050 (53.40%) | loss: 1.521206 | lrm: 0.93 | dt: 995.26ms | tok/sec: 526,782 | mfu: 40.46 | epoch: 1 | total time: 0.66m
+step 00051 (54.47%) | loss: 1.502061 | lrm: 0.91 | dt: 991.96ms | tok/sec: 528,535 | mfu: 40.60 | epoch: 1 | total time: 0.68m
+step 00052 (55.53%) | loss: 1.483063 | lrm: 0.89 | dt: 988.79ms | tok/sec: 530,230 | mfu: 40.73 | epoch: 1 | total time: 0.69m
+step 00053 (56.60%) | loss: 1.474780 | lrm: 0.87 | dt: 987.90ms | tok/sec: 530,711 | mfu: 40.77 | epoch: 1 | total time: 0.71m
+step 00054 (57.67%) | loss: 1.472852 | lrm: 0.85 | dt: 989.27ms | tok/sec: 529,976 | mfu: 40.71 | epoch: 1 | total time: 0.73m
+step 00055 (58.73%) | loss: 1.474173 | lrm: 0.83 | dt: 991.11ms | tok/sec: 528,988 | mfu: 40.63 | epoch: 1 | total time: 0.74m
+step 00056 (59.80%) | loss: 1.484615 | lrm: 0.80 | dt: 990.49ms | tok/sec: 529,320 | mfu: 40.66 | epoch: 1 | total time: 0.76m
+step 00057 (60.87%) | loss: 1.486963 | lrm: 0.78 | dt: 987.71ms | tok/sec: 530,809 | mfu: 40.77 | epoch: 1 | total time: 0.78m
+step 00058 (61.93%) | loss: 1.488594 | lrm: 0.76 | dt: 990.24ms | tok/sec: 529,458 | mfu: 40.67 | epoch: 1 | total time: 0.79m
+step 00059 (63.00%) | loss: 1.494572 | lrm: 0.74 | dt: 991.89ms | tok/sec: 528,572 | mfu: 40.60 | epoch: 1 | total time: 0.81m
+step 00060 (64.07%) | loss: 1.477803 | lrm: 0.72 | dt: 991.28ms | tok/sec: 528,901 | mfu: 40.63 | epoch: 1 | total time: 0.82m
+step 00061 (65.13%) | loss: 1.483552 | lrm: 0.70 | dt: 989.17ms | tok/sec: 530,029 | mfu: 40.71 | epoch: 1 | total time: 0.84m
+step 00062 (66.20%) | loss: 1.489635 | lrm: 0.68 | dt: 991.23ms | tok/sec: 528,928 | mfu: 40.63 | epoch: 1 | total time: 0.86m
+step 00063 (67.27%) | loss: 1.486522 | lrm: 0.65 | dt: 982.40ms | tok/sec: 533,680 | mfu: 40.99 | epoch: 1 | total time: 0.87m
+step 00064 (68.33%) | loss: 1.478339 | lrm: 0.63 | dt: 990.76ms | tok/sec: 529,180 | mfu: 40.65 | epoch: 1 | total time: 0.89m
+step 00065 (69.40%) | loss: 1.479342 | lrm: 0.61 | dt: 987.89ms | tok/sec: 530,715 | mfu: 40.77 | epoch: 1 | total time: 0.91m
+step 00066 (70.47%) | loss: 1.479283 | lrm: 0.59 | dt: 990.25ms | tok/sec: 529,450 | mfu: 40.67 | epoch: 1 | total time: 0.92m
+step 00067 (71.53%) | loss: 1.449617 | lrm: 0.57 | dt: 987.79ms | tok/sec: 530,770 | mfu: 40.77 | epoch: 1 | total time: 0.94m
+step 00068 (72.60%) | loss: 1.440267 | lrm: 0.55 | dt: 994.53ms | tok/sec: 527,171 | mfu: 40.49 | epoch: 1 | total time: 0.96m
+step 00069 (73.67%) | loss: 1.446634 | lrm: 0.53 | dt: 993.13ms | tok/sec: 527,914 | mfu: 40.55 | epoch: 1 | total time: 0.97m
+step 00070 (74.73%) | loss: 1.441536 | lrm: 0.51 | dt: 988.48ms | tok/sec: 530,398 | mfu: 40.74 | epoch: 1 | total time: 0.99m
+step 00071 (75.80%) | loss: 1.432947 | lrm: 0.48 | dt: 988.58ms | tok/sec: 530,346 | mfu: 40.74 | epoch: 1 | total time: 1.01m
+step 00072 (76.87%) | loss: 1.420899 | lrm: 0.46 | dt: 990.25ms | tok/sec: 529,452 | mfu: 40.67 | epoch: 1 | total time: 1.02m
+step 00073 (77.93%) | loss: 1.424314 | lrm: 0.44 | dt: 992.14ms | tok/sec: 528,442 | mfu: 40.59 | epoch: 1 | total time: 1.04m
+step 00074 (79.00%) | loss: 1.416888 | lrm: 0.42 | dt: 988.65ms | tok/sec: 530,308 | mfu: 40.74 | epoch: 1 | total time: 1.06m
+step 00075 (80.07%) | loss: 1.400732 | lrm: 0.40 | dt: 988.34ms | tok/sec: 530,475 | mfu: 40.75 | epoch: 1 | total time: 1.07m
+step 00076 (81.13%) | loss: 1.406286 | lrm: 0.38 | dt: 988.07ms | tok/sec: 530,617 | mfu: 40.76 | epoch: 1 | total time: 1.09m
+step 00077 (82.20%) | loss: 1.398639 | lrm: 0.36 | dt: 988.01ms | tok/sec: 530,651 | mfu: 40.76 | epoch: 1 | total time: 1.11m
+step 00078 (83.27%) | loss: 1.421615 | lrm: 0.33 | dt: 990.57ms | tok/sec: 529,280 | mfu: 40.66 | epoch: 1 | total time: 1.12m
+step 00079 (84.33%) | loss: 1.423292 | lrm: 0.31 | dt: 988.18ms | tok/sec: 530,559 | mfu: 40.75 | epoch: 1 | total time: 1.14m
+step 00080 (85.40%) | loss: 1.425053 | lrm: 0.29 | dt: 985.26ms | tok/sec: 532,132 | mfu: 40.88 | epoch: 1 | total time: 1.15m
+step 00081 (86.47%) | loss: 1.409255 | lrm: 0.27 | dt: 993.50ms | tok/sec: 527,718 | mfu: 40.54 | epoch: 1 | total time: 1.17m
+step 00082 (87.53%) | loss: 1.407501 | lrm: 0.25 | dt: 991.23ms | tok/sec: 528,929 | mfu: 40.63 | epoch: 1 | total time: 1.19m
+step 00083 (88.60%) | loss: 1.396402 | lrm: 0.23 | dt: 989.39ms | tok/sec: 529,912 | mfu: 40.70 | epoch: 1 | total time: 1.20m
+step 00084 (89.67%) | loss: 1.378830 | lrm: 0.21 | dt: 988.67ms | tok/sec: 530,296 | mfu: 40.73 | epoch: 1 | total time: 1.22m
+step 00085 (90.73%) | loss: 1.384729 | lrm: 0.19 | dt: 988.01ms | tok/sec: 530,652 | mfu: 40.76 | epoch: 1 | total time: 1.24m
+step 00086 (91.80%) | loss: 1.380863 | lrm: 0.16 | dt: 989.22ms | tok/sec: 529,999 | mfu: 40.71 | epoch: 1 | total time: 1.25m
+step 00087 (92.87%) | loss: 1.373826 | lrm: 0.14 | dt: 989.75ms | tok/sec: 529,718 | mfu: 40.69 | epoch: 1 | total time: 1.27m
+step 00088 (93.93%) | loss: 1.362353 | lrm: 0.12 | dt: 990.26ms | tok/sec: 529,445 | mfu: 40.67 | epoch: 1 | total time: 1.29m
+step 00089 (95.00%) | loss: 1.355757 | lrm: 0.10 | dt: 989.52ms | tok/sec: 529,838 | mfu: 40.70 | epoch: 1 | total time: 1.30m
+step 00090 (96.07%) | loss: 1.365857 | lrm: 0.08 | dt: 986.51ms | tok/sec: 531,456 | mfu: 40.82 | epoch: 1 | total time: 1.32m
+step 00091 (97.13%) | loss: 1.368432 | lrm: 0.06 | dt: 988.39ms | tok/sec: 530,446 | mfu: 40.75 | epoch: 1 | total time: 1.34m
+step 00092 (98.20%) | loss: 1.362062 | lrm: 0.04 | dt: 988.53ms | tok/sec: 530,373 | mfu: 40.74 | epoch: 1 | total time: 1.35m
+step 00093 (99.27%) | loss: 1.356535 | lrm: 0.01 | dt: 986.98ms | tok/sec: 531,201 | mfu: 40.80 | epoch: 1 | total time: 1.37m
+step 00094 (100.33%) | loss: 1.370868 | lrm: -0.01 | dt: 985.54ms | tok/sec: 531,978 | mfu: 40.86 | epoch: 1 | total time: 1.39m
+Step 00094 | Validation bpb: 0.4463
+2026-04-15 07:50:20,329 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved model parameters to: /workspace/nanochat_data/chatsft_checkpoints/d12/model_000094.pt
+2026-04-15 07:50:20,330 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved metadata to: /workspace/nanochat_data/chatsft_checkpoints/d12/meta_000094.json
+2026-04-15 07:50:21,575 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Saved optimizer state to: /workspace/nanochat_data/chatsft_checkpoints/d12/optim_000094_rank0.pt
+Peak memory usage: 15945.32MiB
+Total training time: 1.39m
+Minimum validation bpb: 0.4463

@@ -1,0 +1,10 @@
+Autodetected device type: cuda
+2026-04-15 07:59:25,106 - nanochat.common - [32m[1mINFO[0m - Distributed world size: 1
+2026-04-15 07:59:25,107 - nanochat.checkpoint_manager - [32m[1mINFO[0m - No model tag provided, guessing model tag: d12
+2026-04-15 07:59:25,107 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Loading model from /workspace/nanochat_data/chatsft_checkpoints/d12 with step 94
+2026-04-15 07:59:25,685 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Building model with config: {'sequence_len': 2048, 'vocab_size': 32768, 'n_layer': 12, 'n_head': 6, 'n_kv_head': 6, 'n_embd': 768, 'window_pattern': 'SSSL'}
+Generating train split:   0%|          | 0/30 [00:00<?, ? examples/s]Generating train split: 100%|██████████| 30/30 [00:00<00:00, 3771.29 examples/s]
+[KRank 0 | 0/1 (0.00%)[KRank 0 | 0/2 (0.00%)[KRank 0 | 0/3 (0.00%)[KRank 0 | 0/4 (0.00%)[KRank 0 | 0/5 (0.00%)[KRank 0 | 0/6 (0.00%)[KRank 0 | 0/7 (0.00%)[KRank 0 | 0/8 (0.00%)[KRank 0 | 0/9 (0.00%)[KRank 0 | 0/10 (0.00%)[KRank 0 | 0/11 (0.00%)[KRank 0 | 0/12 (0.00%)[KRank 0 | 0/13 (0.00%)[KRank 0 | 1/14 (7.14%)[KRank 0 | 1/15 (6.67%)[KRank 0 | 1/16 (6.25%)[KRank 0 | 1/17 (5.88%)[KRank 0 | 1/18 (5.56%)[KRank 0 | 1/19 (5.26%)[KRank 0 | 1/20 (5.00%)[KRank 0 | 1/21 (4.76%)[KRank 0 | 1/22 (4.55%)[KRank 0 | 1/23 (4.35%)[KRank 0 | 1/24 (4.17%)[KRank 0 | 1/25 (4.00%)[KRank 0 | 1/26 (3.85%)[KRank 0 | 1/27 (3.70%)[KRank 0 | 1/28 (3.57%)[KRank 0 | 1/29 (3.45%)[KRank 0 | 1/30 (3.33%)
+==================================================
+Final: 1/30 (3.33%)
+AIME-2025 accuracy: 3.33%

@@ -96,12 +96,37 @@ python -m pytest tests/test_aime_task.py -v
 - evaluate 逻辑（5 个 case）
 - 数据加载完整性（9 个 case）
 
-### 预期评估结果
+### 端到端评估结果
 
-nanochat 小模型（130M 参数）在 AIME 上预期准确率接近 0%。这是正常的 — 即使 GPT-4 在 AIME 上也仅约 30%。AIME 评估的价值在于：
-1. 提供一个高难度数学推理 benchmark
-2. 随着模型规模增大，可以观察到准确率提升
-3. 与其他模型的 AIME 得分可直接对比
+在 Vast.ai H100 SXM 80GB 上，使用 SFT 后的 d12 模型（~286M 参数）评估：
+
+| 评估集 | 正确数 | 总题数 | 准确率 |
+|--------|--------|--------|--------|
+| **AIME-2024** | 0 | 30 | **0.00%** |
+| **AIME-2025** | 1 | 30 | **3.33%** |
+
+这符合预期 — 即使 GPT-4 在 AIME 上也仅约 30%，0.3B 小模型基本无法进行有效的数学推理。
+
+### 模型输出样例
+
+**AIME-2024 第 1 题**（正确答案：204）
+
+> **输入**: Every morning Aya goes for a 9-kilometer-long walk and stops at a coffee shop afterwards. When she walks at a constant speed of s kilometers per hour, the walk takes her 4 hours, including t minutes spent in the coffee shop...
+>
+> **模型输出**: To find the number of minutes the walk takes Aya, we need to calculate the total time spent in the coffee shop and then divide it by the total time spent in the coffee shop... *(逻辑混乱，反复重复，无法有效推导)*
+
+### AIME 评估的价值
+
+尽管小模型准确率接近 0%，AIME 评估仍有价值：
+1. 提供高难度数学推理 benchmark，与其他模型可直接对比
+2. 随着模型规模增大，可观察到准确率提升趋势
+3. AIME-2025 意外答对 1 题（3.33%），说明评估 pipeline 端到端工作正常
+
+### 评估日志
+
+完整日志保存在 `dev/logs/` 目录下：
+- `aime_2024_eval.log`
+- `aime_2025_eval.log`
 
 ## 8. 已知限制与改进方向
 
