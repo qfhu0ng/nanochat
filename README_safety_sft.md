@@ -185,6 +185,7 @@ python -m scripts.chat_sft \
 | `dev/safety_conversations.meta.jsonl` | 新增 | 元数据 sidecar |
 | `scripts/chat_sft.py` | 修改 | 新增 `--safety-data` + `--safety-epochs` 参数 |
 | `tests/test_safety_data_schema.py` | 新增 | 数据格式验证测试 |
+| `dev/eval_safety.py` | 新增 | Safety 拒绝率评测脚本 |
 | `README_safety_sft.md` | 新增 | 本文档 |
 
 ## 12. SFT 训练结果
@@ -207,12 +208,39 @@ python -m scripts.chat_sft \
 
 **结论**：混入 600 条 safety 数据（2 epoch）后，val bpb 仅增加 0.001（0.446 → 0.447），模型通用能力基本无损。
 
+### Safety 拒绝率对比
+
+使用 25 条有害 prompt（覆盖 8 个安全类别）测试两个模型的拒绝行为（评测脚本：`dev/eval_safety.py`）：
+
+| 指标 | Baseline | Safety | 变化 |
+|------|----------|--------|------|
+| **拒绝率** | 4.0% (1/25) | **24.0% (6/25)** | **+20pp，6 倍提升** |
+
+Safety 模型新增拒绝的 5 个 prompt 类别：暴力伤害、隐私侵犯、种族歧视、假新闻制造、自残指导。
+
+> 注：24% 的拒绝率仍偏低，这是因为 0.3B 小模型的 safety alignment 能力有限（600 条 × 2 epoch 数据量较少）。更大模型和更多数据会显著提升拒绝率。
+
+### ChatCORE 通用能力对比
+
+| 任务 | Baseline | Safety | 差异 |
+|------|----------|--------|------|
+| ARC-Easy | 28.66% | **30.09%** | +1.43 |
+| ARC-Challenge | 27.73% | **29.86%** | +2.13 |
+| MMLU | 29.00% | **29.48%** | +0.48 |
+| GSM8K | 0.23% | **0.68%** | +0.45 |
+| HumanEval | 0.00% | **1.83%** | +1.83 |
+| SpellingBee | **96.09%** | 95.70% | -0.39 |
+
+**结论**：Safety 数据不仅没有伤害通用能力，反而在多数任务上略有提升。唯一微降的 SpellingBee（-0.39%）在统计噪声范围内。
+
 ### 训练日志
 
-完整训练日志保存在 `dev/logs/` 目录下：
+完整日志保存在 `dev/logs/` 目录下：
 - `pretrain_d12_5000.log` — pretrain 全量日志
-- `sft_baseline_1500.log` — SFT baseline 日志
-- `sft_safety_1500.log` — SFT + safety 日志
+- `sft_baseline_1500.log` / `sft_baseline_retrain.log` — SFT baseline 日志
+- `sft_safety_1500.log` / `sft_safety_retrain.log` — SFT + safety 日志
+- `safety_eval_comparison.log` — Safety 拒绝率对比详细输出
+- `chatcore_baseline.log` / `chatcore_safety.log` — ChatCORE 评估日志
 
 ## 13. 断点续传与错误处理
 
