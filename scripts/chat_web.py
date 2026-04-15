@@ -151,6 +151,7 @@ class ChatRequest(BaseModel):
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
     top_k: Optional[int] = None
+    top_p: Optional[float] = None
 
 def validate_chat_request(request: ChatRequest):
     """Validate chat request to prevent abuse."""
@@ -207,6 +208,14 @@ def validate_chat_request(request: ChatRequest):
                 detail=f"top_k must be between {MIN_TOP_K} and {MAX_TOP_K}"
             )
 
+    # Validate top_p
+    if request.top_p is not None:
+        if not (0.0 < request.top_p <= 1.0):
+            raise HTTPException(
+                status_code=400,
+                detail="top_p must be between 0.0 (exclusive) and 1.0 (inclusive)"
+            )
+
     # Validate max_tokens
     if request.max_tokens is not None:
         if not (MIN_MAX_TOKENS <= request.max_tokens <= MAX_MAX_TOKENS):
@@ -259,7 +268,8 @@ async def generate_stream(
     tokens,
     temperature=None,
     max_new_tokens=None,
-    top_k=None
+    top_k=None,
+    top_p=None,
 ) -> AsyncGenerator[str, None]:
     """Generate assistant response with streaming."""
     temperature = temperature if temperature is not None else args.temperature
@@ -280,6 +290,7 @@ async def generate_stream(
         max_tokens=max_new_tokens,
         temperature=temperature,
         top_k=top_k,
+        top_p=top_p,
         seed=random.randint(0, 2**31 - 1)
     ):
         token = token_column[0]
@@ -351,7 +362,8 @@ async def chat_completions(request: ChatRequest):
                     conversation_tokens,
                     temperature=request.temperature,
                     max_new_tokens=request.max_tokens,
-                    top_k=request.top_k
+                    top_k=request.top_k,
+                    top_p=request.top_p,
                 ):
                     # Accumulate response for logging
                     chunk_data = json.loads(chunk.replace("data: ", "").strip())
@@ -416,6 +428,7 @@ class OpenAIChatRequest(BaseModel):
     messages: List[OpenAIChatMessage]
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
+    top_p: Optional[float] = None
     top_k: Optional[int] = None  # extension: not in OpenAI spec but useful
     stream: Optional[bool] = False
 
@@ -432,6 +445,7 @@ def validate_openai_request(request: OpenAIChatRequest):
         temperature=request.temperature,
         max_tokens=request.max_tokens,
         top_k=request.top_k,
+        top_p=request.top_p,
     )
     validate_chat_request(internal)
 
@@ -493,6 +507,7 @@ async def openai_chat_completions(request: OpenAIChatRequest):
                         temperature=request.temperature,
                         max_new_tokens=request.max_tokens,
                         top_k=request.top_k,
+                        top_p=request.top_p,
                     ):
                         chunk_data = json.loads(chunk.replace("data: ", "").strip())
                         if "token" in chunk_data:
@@ -530,6 +545,7 @@ async def openai_chat_completions(request: OpenAIChatRequest):
                 temperature=request.temperature,
                 max_new_tokens=request.max_tokens,
                 top_k=request.top_k,
+                top_p=request.top_p,
             ):
                 chunk_data = json.loads(chunk.replace("data: ", "").strip())
                 if "token" in chunk_data:

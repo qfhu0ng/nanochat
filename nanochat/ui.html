@@ -353,8 +353,13 @@
         <div class="settings-inner">
             <div class="setting-group">
                 <span class="setting-label">Temperature</span>
-                <input type="range" class="setting-slider" id="tempSlider" min="0" max="2" step="0.1" value="0.8" oninput="updateTemperature(this.value)">
+                <input type="range" class="setting-slider" id="tempSlider" min="0" max="1" step="0.1" value="0.8" oninput="updateTemperature(this.value)">
                 <span class="setting-value" id="tempValue">0.8</span>
+            </div>
+            <div class="setting-group">
+                <span class="setting-label">Top-p</span>
+                <input type="range" class="setting-slider" id="toppSlider" min="0" max="1" step="0.05" value="1" oninput="updateTopP(this.value)">
+                <span class="setting-value" id="toppValue">off</span>
             </div>
             <div class="setting-group">
                 <span class="setting-label">Top-k</span>
@@ -398,6 +403,7 @@
         let messages = [];
         let isGenerating = false;
         let currentTemperature = 0.8;
+        let currentTopP = null; // null = disabled (1.0)
         let currentTopK = 50;
 
         function toggleSettings() {
@@ -410,6 +416,12 @@
         function updateTemperature(value) {
             currentTemperature = parseFloat(value);
             document.getElementById('tempValue').textContent = currentTemperature.toFixed(1);
+        }
+
+        function updateTopP(value) {
+            const v = parseFloat(value);
+            currentTopP = (v >= 1.0) ? null : v;
+            document.getElementById('toppValue').textContent = currentTopP === null ? 'off' : currentTopP.toFixed(2);
         }
 
         function updateTopK(value) {
@@ -529,6 +541,7 @@
                     body: JSON.stringify({
                         messages: messages,
                         temperature: currentTemperature,
+                        top_p: currentTopP,
                         top_k: currentTopK,
                         max_tokens: 512
                     }),
@@ -616,8 +629,8 @@
                     addMessage('console', `Current temperature: ${currentTemperature}`);
                 } else {
                     const temp = parseFloat(arg);
-                    if (isNaN(temp) || temp < 0 || temp > 2) {
-                        addMessage('console', 'Invalid temperature. Must be between 0.0 and 2.0');
+                    if (isNaN(temp) || temp < 0 || temp > 1) {
+                        addMessage('console', 'Invalid temperature. Must be between 0.0 and 1.0');
                     } else {
                         currentTemperature = temp;
                         document.getElementById('tempSlider').value = temp;
