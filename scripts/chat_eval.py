@@ -22,6 +22,7 @@ from tasks.mmlu import MMLU
 from tasks.arc import ARC
 from tasks.gsm8k import GSM8K
 from tasks.spellingbee import SpellingBee
+from tasks.aime import AIME
 
 # -----------------------------------------------------------------------------
 # Generative evaluation loop (we go one problem at a time, sample, evaluate)
@@ -165,6 +166,8 @@ def run_chat_eval(task_name, model, tokenizer, engine,
         'ARC-Challenge': partial(ARC, subset="ARC-Challenge", split="test"),
         'GSM8K': partial(GSM8K, subset="main", split="test"),
         'SpellingBee': partial(SpellingBee, size=256, split="test"),
+        'AIME-2024': partial(AIME, year=2024),
+        'AIME-2025': partial(AIME, year=2025),
     }[task_name]
     task_object = task_module()
     # Run the evaluation
