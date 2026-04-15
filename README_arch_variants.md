@@ -102,6 +102,8 @@ nanochat 在 `torch.device("meta")` 上构建模型，`__init__` 中的 `nn.Para
 
 ### 6.1 Val BPB 曲线
 
+![Val BPB Curves](dev/task3_val_bpb_curves.png)
+
 | Step | Baseline | SwiGLU (S) | LearnableNorm (N) | MLA (M) | S+N+M |
 |------|:--------:|:----------:|:-----------------:|:-------:|:-----:|
 | 0 | 3.170 | 3.170 | 3.170 | 3.170 | 3.170 |
