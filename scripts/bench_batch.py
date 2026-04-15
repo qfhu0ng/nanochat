@@ -57,8 +57,15 @@ def sync():
         torch.cuda.synchronize()
 
 
+def _get_stop_tokens(engine):
+    """Get the terminal token ids."""
+    return (engine.tokenizer.encode_special("<|assistant_end|>"),
+            engine.tokenizer.get_bos_token_id())
+
+
 def run_sequential_timed(engine, prompts, max_tokens, temperature, seed):
     """Run each prompt sequentially, return results and per-prompt latencies."""
+    assistant_end, bos = _get_stop_tokens(engine)
     results = []
     latencies = []
     for prompt in prompts:
@@ -67,7 +74,10 @@ def run_sequential_timed(engine, prompts, max_tokens, temperature, seed):
         t0 = time.perf_counter()
         for token_column, _ in engine.generate(prompt, num_samples=1, max_tokens=max_tokens,
                                                 temperature=temperature, seed=seed):
-            tokens_out.append(token_column[0])
+            tok = token_column[0]
+            if tok == assistant_end or tok == bos:
+                break
+            tokens_out.append(tok)
         sync()
         latencies.append(time.perf_counter() - t0)
         results.append(tokens_out)
@@ -76,13 +86,20 @@ def run_sequential_timed(engine, prompts, max_tokens, temperature, seed):
 
 def run_batched_timed(engine, prompts, max_tokens, temperature, seed):
     """Run all prompts through generate_multi(), return results and total time."""
-    results = [[] for _ in prompts]
+    assistant_end, bos = _get_stop_tokens(engine)
+    B = len(prompts)
+    results = [[] for _ in range(B)]
+    completed = [False] * B
     sync()
     t0 = time.perf_counter()
     for token_column, _ in engine.generate_multi(prompts, max_tokens=max_tokens,
                                                   temperature=temperature, seed=seed):
         for i, tok in enumerate(token_column):
-            results[i].append(tok)
+            if not completed[i]:
+                if tok == assistant_end or tok == bos:
+                    completed[i] = True
+                else:
+                    results[i].append(tok)
     sync()
     total_time = time.perf_counter() - t0
     return results, total_time
