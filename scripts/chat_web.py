@@ -33,6 +33,8 @@ Abuse Prevention:
 import argparse
 import json
 import os
+import time
+import uuid
 import torch
 import asyncio
 import logging
@@ -400,8 +402,181 @@ async def stats():
         ]
     }
 
+# -----------------------------------------------------------------------------
+# OpenAI-compatible API (/v1/chat/completions, /v1/models)
+
+NANOCHAT_MODEL_ID = "nanochat"
+
+class OpenAIChatMessage(BaseModel):
+    role: str
+    content: str
+
+class OpenAIChatRequest(BaseModel):
+    model: str = NANOCHAT_MODEL_ID
+    messages: List[OpenAIChatMessage]
+    temperature: Optional[float] = None
+    max_tokens: Optional[int] = None
+    top_k: Optional[int] = None  # extension: not in OpenAI spec but useful
+    stream: Optional[bool] = False
+
+def validate_openai_request(request: OpenAIChatRequest):
+    """Validate OpenAI-format chat request."""
+    if request.model != NANOCHAT_MODEL_ID:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Model '{request.model}' not found. Available: {NANOCHAT_MODEL_ID}"
+        )
+    # Reuse existing validation by converting to internal format
+    internal = ChatRequest(
+        messages=[ChatMessage(role=m.role, content=m.content) for m in request.messages],
+        temperature=request.temperature,
+        max_tokens=request.max_tokens,
+        top_k=request.top_k,
+    )
+    validate_chat_request(internal)
+
+@app.post("/v1/chat/completions")
+async def openai_chat_completions(request: OpenAIChatRequest):
+    """OpenAI-compatible chat completion endpoint."""
+    validate_openai_request(request)
+
+    request_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+    created = int(time.time())
+
+    # Acquire worker
+    worker_pool = app.state.worker_pool
+    worker = await worker_pool.acquire_worker()
+
+    try:
+        # Build conversation tokens
+        bos = worker.tokenizer.get_bos_token_id()
+        user_start = worker.tokenizer.encode_special("<|user_start|>")
+        user_end = worker.tokenizer.encode_special("<|user_end|>")
+        assistant_start = worker.tokenizer.encode_special("<|assistant_start|>")
+        assistant_end = worker.tokenizer.encode_special("<|assistant_end|>")
+
+        conversation_tokens = [bos]
+        prompt_tokens = 1  # count bos
+        for message in request.messages:
+            content_tokens = worker.tokenizer.encode(message.content)
+            if message.role == "user":
+                conversation_tokens.append(user_start)
+                conversation_tokens.extend(content_tokens)
+                conversation_tokens.append(user_end)
+                prompt_tokens += len(content_tokens) + 2
+            elif message.role == "assistant":
+                conversation_tokens.append(assistant_start)
+                conversation_tokens.extend(content_tokens)
+                conversation_tokens.append(assistant_end)
+                prompt_tokens += len(content_tokens) + 2
+        conversation_tokens.append(assistant_start)
+        prompt_tokens += 1
+
+        if request.stream:
+            # Streaming response
+            async def stream_openai():
+                completion_tokens = 0
+                try:
+                    # First chunk: role
+                    first_chunk = {
+                        "id": request_id,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": NANOCHAT_MODEL_ID,
+                        "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}]
+                    }
+                    yield f"data: {json.dumps(first_chunk)}\n\n"
+
+                    # Content chunks
+                    async for chunk in generate_stream(
+                        worker, conversation_tokens,
+                        temperature=request.temperature,
+                        max_new_tokens=request.max_tokens,
+                        top_k=request.top_k,
+                    ):
+                        chunk_data = json.loads(chunk.replace("data: ", "").strip())
+                        if "token" in chunk_data:
+                            completion_tokens += 1
+                            content_chunk = {
+                                "id": request_id,
+                                "object": "chat.completion.chunk",
+                                "created": created,
+                                "model": NANOCHAT_MODEL_ID,
+                                "choices": [{"index": 0, "delta": {"content": chunk_data["token"]}, "finish_reason": None}]
+                            }
+                            yield f"data: {json.dumps(content_chunk, ensure_ascii=False)}\n\n"
+
+                    # Final chunk: finish_reason
+                    final_chunk = {
+                        "id": request_id,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": NANOCHAT_MODEL_ID,
+                        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]
+                    }
+                    yield f"data: {json.dumps(final_chunk)}\n\n"
+                    yield "data: [DONE]\n\n"
+                finally:
+                    await worker_pool.release_worker(worker)
+
+            return StreamingResponse(stream_openai(), media_type="text/event-stream")
+
+        else:
+            # Non-streaming response: collect all tokens
+            full_response = ""
+            completion_tokens = 0
+            async for chunk in generate_stream(
+                worker, conversation_tokens,
+                temperature=request.temperature,
+                max_new_tokens=request.max_tokens,
+                top_k=request.top_k,
+            ):
+                chunk_data = json.loads(chunk.replace("data: ", "").strip())
+                if "token" in chunk_data:
+                    full_response += chunk_data["token"]
+                    completion_tokens += 1
+
+            await worker_pool.release_worker(worker)
+
+            return {
+                "id": request_id,
+                "object": "chat.completion",
+                "created": created,
+                "model": NANOCHAT_MODEL_ID,
+                "choices": [{
+                    "index": 0,
+                    "message": {"role": "assistant", "content": full_response},
+                    "finish_reason": "stop"
+                }],
+                "usage": {
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": prompt_tokens + completion_tokens,
+                }
+            }
+
+    except Exception as e:
+        await worker_pool.release_worker(worker)
+        raise e
+
+@app.get("/v1/models")
+async def list_models():
+    """OpenAI-compatible model listing endpoint."""
+    return {
+        "object": "list",
+        "data": [{
+            "id": NANOCHAT_MODEL_ID,
+            "object": "model",
+            "created": 0,
+            "owned_by": "nanochat",
+        }]
+    }
+
+# -----------------------------------------------------------------------------
+
 if __name__ == "__main__":
     import uvicorn
     print(f"Starting NanoChat Web Server")
     print(f"Temperature: {args.temperature}, Top-k: {args.top_k}, Max tokens: {args.max_tokens}")
+    print(f"OpenAI-compatible API: /v1/chat/completions, /v1/models")
     uvicorn.run(app, host=args.host, port=args.port)
