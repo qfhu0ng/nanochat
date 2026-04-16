@@ -134,22 +134,63 @@ acceptance_rate = stats['total_accepted'] / stats['total_draft']
 | 4 | 0.0 | 256 | 26286 | 60.5 | 0.82x | 45.9% | 1.7/4 |
 | 4 | 0.7 | 256 | 31140 | 51.7 | 0.64x | 42.3% | 1.6/4 |
 
-### 3. 场景分析 — 为何未实现加速
+### 3. 场景分析 — 加速条件与实测对照
 
-**所有配置 speedup 均 < 1x（0.55x–0.82x）。** 这在当前硬件/模型组合下是预期的：
+#### 加速的理论条件
 
-1. **H100 显存带宽过高。** Speculative decoding 在 decode 阶段为 memory-bandwidth bound、GPU 计算利用率低时才有效。H100 SXM 的 3.35 TB/s HBM3 带宽已经将 d24（1.38B）推到 ~77 tok/s——接近计算-带宽平衡点。几乎没有空闲算力来摊销 draft 开销。
+Speculative decoding 每轮产出 `α·K + 1` 个 token（α = acceptance rate），耗时 `K·t_d + t_T(K) + t_T(1) + t_d + overhead`。加速条件为：
 
-2. **Draft/Target 体量比太小。** d12/d24 仅 ~5x 参数比；d8/d24 为 ~15x。典型论文使用 10–100x 比例（如 7B target + 68M draft）。nanochat 的小模型下，draft 和 target 的 T=1 forward 都很快（~4–13ms），K 次 draft forward 的相对开销很大。
+```
+(α·K + 1) / (K·t_d + t_T(K) + t_T(1) + t_d + overhead) > 1 / t_T(1)
+```
 
-3. **每轮固定开销。** 每轮需要：K × draft T=1 + 1 × target T=K + 1 × target T=1 + 1 × draft T=1 + 回滚 + `_compute_prev_embedding`。即使 ~50% acceptance，开销仍超过节省。
+其中 `t_d` = draft T=1 耗时，`t_T(1)` = target T=1 耗时，`t_T(K)` = target T=K 耗时。
 
-4. **推理未使用 `torch.compile`。** Benchmark 运行的是未编译模型。编译后的 target+draft 可能改善平衡。
+Decode 阶段是 memory-bandwidth bound，`t_T(K) ≈ t_T(1)`（读同样多的 KV cache）。简化后加速条件为：
 
-**Speculative decoding 适用场景：**
-- 低带宽消费级 GPU（RTX 4090: 1 TB/s, A6000: 768 GB/s）
-- 大 target 模型（>10B params），T=1 decode 本身慢
-- 极快的 draft 模型（如 n-gram 模型、量化后的小 Transformer）
+```
+α > (K·c + 1 + overhead/t_T) / K    其中 c = t_d / t_T(1)
+```
+
+即：**acceptance rate 必须足够高，且 draft/target 耗时比 c 必须足够小**。
+
+#### 实测数据代入
+
+从 benchmark 估算单次 forward 耗时（d24 标准 AR: ~77 tok/s → `t_T ≈ 13ms`）：
+
+| 配置 | t_d (ms) | t_T (ms) | c = t_d/t_T | K | α | 加速所需最低 α |
+|---|---|---|---|---|---|---|
+| d12+d24 | ~5 | ~13 | 0.38 | 4 | 56.8% | ~63% |
+| d8+d24 | ~3 | ~13 | 0.23 | 4 | 45.8% | ~48% |
+
+d12+d24 的 acceptance rate（56.8%）低于阈值（63%），因此无加速。d8+d24 的 α（45.8%）也低于阈值（48%），刚好卡在临界以下。
+
+#### 何时加速明显
+
+**1. Target 模型更大（>10B params）时：**
+
+大模型 T=1 decode 慢（如 7B 在 A100 上 ~30ms），而小 draft（68M）只需 ~1ms，c = 0.03。此时加速阈值降至 ~28%，绝大多数 draft 都能满足。典型加速 2-3x。
+
+**2. 低带宽 GPU（消费级）时：**
+
+| GPU | 带宽 | d24 T=1 估计 | c (d8 draft) | 阈值 α |
+|---|---|---|---|---|
+| H100 SXM | 3.35 TB/s | ~13ms | 0.23 | ~48% |
+| A100 | 2.0 TB/s | ~22ms | 0.14 | ~39% |
+| RTX 4090 | 1.0 TB/s | ~44ms | 0.07 | ~32% |
+| RTX 3090 | 0.94 TB/s | ~47ms | 0.06 | ~31% |
+
+低带宽 GPU 上 target decode 更慢，draft 开销占比更小，加速阈值更低。RTX 4090 上 α > 32% 即可加速——d8+d24 的 45.8% 足够，预期 ~1.4x 加速。
+
+**3. Draft 与 target 分布匹配度更高时：**
+
+同一模型不同量化版本（如 FP16 target + INT4 draft）共享相同的训练数据和架构，acceptance rate 通常 >80%。此时即使在 H100 上也能获得 1.5-2x 加速。
+
+**4. 本实验为何不加速：**
+
+- H100 带宽过高 → target T=1 已经很快（13ms），draft 开销占比大
+- d8/d12 与 d24 架构相同但训练数据/步数不同（d8 仅 1280 步 pretrain）→ 分布差异大 → α 低
+- 模型未 compile → 额外的 Python/框架开销放大了每轮固定成本
 
 ## d24 模型评估结果
 
