@@ -655,9 +655,14 @@ class GPT(nn.Module):
             x_pre_smear = kv_cache.prev_embedding
             kv_cache.prev_embedding = x[:, -1:, :]
             if T > 1:
-                # Prefill: apply smear to positions 1+, same as training
+                # Prefill/verify: apply smear to positions 1+ using pre-smear embeddings
                 gate = self.smear_lambda.to(x.dtype) * torch.sigmoid(self.smear_gate(x[:, 1:, :24]))
                 x = torch.cat([x[:, :1], x[:, 1:] + gate * x[:, :-1]], dim=1)
+                # Also smear position 0 with cached prev_embedding if available
+                # (needed for speculative verify where T>1 continues after prior decode)
+                if x_pre_smear is not None:
+                    gate0 = self.smear_lambda.to(x.dtype) * torch.sigmoid(self.smear_gate(x[:, :1, :24]))
+                    x = torch.cat([x[:, :1] + gate0 * x_pre_smear, x[:, 1:]], dim=1)
             elif x_pre_smear is not None:
                 # Decode: single token, use cached prev embedding
                 gate = self.smear_lambda.to(x.dtype) * torch.sigmoid(self.smear_gate(x[:, :, :24]))
