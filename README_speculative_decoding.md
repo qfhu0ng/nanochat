@@ -1,86 +1,86 @@
 # Task 5: Speculative Decoding
 
-## Algorithm
+## 算法
 
-Speculative decoding (Leviathan et al., 2023; Chen et al., 2023) accelerates autoregressive inference by using a small **draft model** to propose K candidate tokens, then verifying them in a single **target model** forward pass.
+Speculative decoding（Leviathan et al., 2023; Chen et al., 2023）通过小型 **draft 模型** 快速猜测 K 个候选 token，再由 **target 模型** 一次 forward pass 验证，加速自回归推理。
 
-**Key guarantee:** The output distribution is *mathematically identical* to standard AR decoding from the target model, regardless of draft model quality.
+**核心保证：** 无论 draft 模型质量如何，输出分布与 target 模型的标准 AR decode **数学上完全一致**。
 
-### Per-round flow
+### 每轮流程
 
-1. **Draft phase:** Draft model generates K tokens autoregressively (K × T=1 forward)
-2. **Verify phase:** Target model processes all K draft tokens in one forward pass (1 × T=K)
-3. **Accept/reject:**
-   - **Greedy (temp=0):** Accept if `argmax(target_logits) == draft_token`, else use target's argmax as correction
-   - **Sampling (temp>0):** Accept with probability `min(1, p(x)/q(x))`, reject → resample from `norm(max(0, p-q))`
-4. **Output:** 1 to K+1 tokens per round (accepted drafts + 1 correction/bonus)
+1. **Draft 阶段：** Draft 模型自回归生成 K 个 token（K × T=1 forward）
+2. **Verify 阶段：** Target 模型一次 forward pass 处理 K 个 draft token（1 × T=K）
+3. **接受/拒绝：**
+   - **Greedy (temp=0)：** `argmax(target_logits) == draft_token` 则接受，否则用 target 的 argmax 纠正
+   - **Sampling (temp>0)：** 以 `min(1, p(x)/q(x))` 概率接受，拒绝时从 `norm(max(0, p-q))` 重采样
+4. **产出：** 每轮 1 ~ K+1 个 token（接受的 draft tokens + 1 个纠正/bonus token）
 
-### Verify index mapping
+### Verify 索引映射
 
-| Verify draft_tokens[i] | Logits source |
+| 校验 draft_tokens[i] | Logits 来源 |
 |---|---|
-| i=0 | `target_logits` (saved from previous round) |
+| i=0 | `target_logits`（上一轮保存的） |
 | i=1..K-1 | `verify_logits[:, i-1, :]` |
 | **bonus** | `verify_logits[:, K-1, :]` |
 
-### Per-round cost
+### 每轮开销
 
 K × draft T=1 + 1 × target T=K + 1 × target T=1 + 1 × draft T=1
 
-## Implementation
+## 实现
 
-### Single filtering function (`_apply_sampling_filter`)
+### 单一过滤函数 (`_apply_sampling_filter`)
 
-**Critical for distribution consistency:** Both draft sampling (q) and target verification (p) use the *exact same* function:
+**分布一致性的关键：** Draft 采样（q）和 target 验证（p）使用**同一个函数**：
 
 ```python
 _apply_sampling_filter(logits, temperature, top_k, top_p) → probs
 ```
 
-Filter chain: `temp scaling → top_k → top_p (nucleus) → softmax`
+过滤链：`temp scaling → top_k → top_p (nucleus) → softmax`
 
-`sample_next_token` was refactored to call this function internally, ensuring a single code path.
+`sample_next_token` 重构为内部调用此函数，确保单一代码路径。
 
-### KV Cache rollback
+### KV Cache 回滚
 
-After accept/reject, both caches are rolled back:
+接受/拒绝后，两个 cache 回滚：
 
-1. `restore_state()` → reset to pre-draft position (seqlens + prev_embedding)
-2. Advance seqlens by `n_accepted` (KV entries from verify/draft forwards are still valid)
-3. Recompute `prev_embedding` via `_compute_prev_embedding(model, last_accepted_token)`
-4. Forward correction/bonus token through both models (T=1)
+1. `restore_state()` → 恢复到 draft 前的位置（seqlens + prev_embedding）
+2. `cache_seqlens += n_accepted`（verify/draft forward 写入的 KV 条目仍然有效）
+3. 通过 `_compute_prev_embedding(model, last_accepted_token)` 重算 `prev_embedding`
+4. 将 correction/bonus token 通过两个模型 forward（T=1）
 
-### Smear state recovery
+### Smear 状态恢复
 
-nanochat uses a "smear" mechanism that mixes the previous token's normalized embedding into the current token. After rollback, `prev_embedding` is recomputed:
+nanochat 使用 "smear" 机制将前一个 token 的归一化 embedding 混入当前 token。回滚后需要重算 `prev_embedding`：
 
 ```python
-prev_embedding = embed_norm(wte(token_id))  # or rms_norm if embed_norm is None
+prev_embedding = embed_norm(wte(token_id))  # 若 embed_norm 为 None 则用 rms_norm
 ```
 
-This matches what the model stores during normal forward passes (`kv_cache.prev_embedding = x[:, -1:, :]` after embed_norm).
+此外，gpt.py 的 T>1 + KV cache 代码路径原本不对 position 0 做 smear（因为 prefill 时 position 0 没有前序 token）。Speculative verify 在 decode 中途做 T=K forward，position 0 需要用缓存的 `prev_embedding` 做 smear，因此新增 3 行修复。
 
-### Sampling parameters
+### 采样参数
 
-All parameters from `generate()` are supported:
-- `temperature`: 0.0 (greedy) or > 0 (sampling)
-- `top_k`: top-k filtering
-- `top_p`: nucleus sampling
+支持 `generate()` 的全部采样参数：
+- `temperature`：0.0（greedy）或 > 0（sampling）
+- `top_k`：top-k 过滤
+- `top_p`：nucleus sampling
 
 ## API
 
 ```python
 engine = Engine(target_model, tokenizer)
 
-# Streaming
+# 流式生成
 for token_column, token_masks in engine.generate_speculative(
     tokens, draft_model, K=4, max_tokens=256,
     temperature=0.7, top_k=50, top_p=0.9, seed=42
 ):
-    tok = token_column[0]    # single token per yield
-    is_draft = token_masks[0]  # 1=draft-accepted, 0=correction/bonus
+    tok = token_column[0]    # 每次 yield 一个 token
+    is_draft = token_masks[0]  # 1=draft 接受, 0=纠正/bonus
 
-# Stats (available after generation completes)
+# 统计信息（生成结束后可读）
 stats = engine.speculative_stats
 # {'total_draft': N, 'total_accepted': M, 'total_rounds': R}
 acceptance_rate = stats['total_accepted'] / stats['total_draft']
@@ -88,25 +88,25 @@ acceptance_rate = stats['total_accepted'] / stats['total_draft']
 
 ## Benchmark
 
-### Setup
+### 实验配置
 
-- **Target:** d24 SFT (1.38B params, 24 layers, n_embd=1536)
-- **Draft:** d12 SFT (286M params, 12 layers, n_embd=768) or d8 SFT (~90M params, 8 layers, n_embd=512)
-- **Hardware:** 1×H100 80GB SXM (HBM3, ~3.35 TB/s bandwidth)
-- **Script:** `python -m scripts.bench_speculative --target-tag <tag> --draft-tag <tag>`
-- **Standard AR baseline:** ~77 tok/s on d24
+- **Target：** d24 SFT（1.38B params, 24 层, n_embd=1536）
+- **Draft：** d12 SFT（286M params, 12 层, n_embd=768）或 d8 SFT（~90M params, 8 层, n_embd=512）
+- **硬件：** 1×H100 80GB SXM（HBM3, ~3.35 TB/s 带宽）
+- **脚本：** `python -m scripts.bench_speculative --target-tag <tag> --draft-tag <tag>`
+- **标准 AR baseline：** d24 上 ~77 tok/s
 
-### 1. Correctness — Distribution Consistency
+### 1. 正确性 — 分布一致性验证
 
-**Greedy (temp=0) strong consistency:**
-- max_tokens=64: **PASS** across all K values and both draft models (d12, d8)
-- max_tokens=256: FAIL at a single prompt (token 218), consistent across K — caused by tool-use divergence (standard `generate()` has calculator state machine, `generate_speculative()` does not) and FA3 kernel numerical path differences between T=K and T=1
+**Greedy (temp=0) 强一致性：**
+- max_tokens=64：所有 K 值、两个 draft 模型（d12, d8）均 **PASS**
+- max_tokens=256：单个 prompt 在 token 218 处分歧（所有 K 值一致）——原因为标准 `generate()` 有 calculator 状态机会注入 forced tokens，`generate_speculative()` 按设计不处理 tool-use；以及 FA3 kernel 在 T=K 与 T=1 之间的数值路径差异
 
-**Sampling (temp>0) statistical consistency:**
-- Unit test with small-vocab MockModel: KL divergence **0.0016** over 2000 samples (well within statistical bounds)
-- Both p and q computed by the same `_apply_sampling_filter` function — single code path guarantees theoretical distribution match
+**Sampling (temp>0) 统计一致性：**
+- 小词表 MockModel 单元测试：2000 样本 KL 散度 **0.0016**（远在统计置信区间内）
+- p 和 q 由同一个 `_apply_sampling_filter` 函数计算——单一代码路径保证理论分布一致
 
-### 2. Speedup Results — d12 (draft) + d24 (target)
+### 2. 加速实测表 — d12 (draft) + d24 (target)
 
 | K | temp | max_tok | wall_ms | tok/s | speedup | accept% | avg_acc/round |
 |---|---|---|---|---|---|---|---|
@@ -121,7 +121,7 @@ acceptance_rate = stats['total_accepted'] / stats['total_draft']
 | 4 | 0.0 | 256 | 28324 | 56.1 | 0.76x | 56.9% | 2.1/4 |
 | 4 | 0.7 | 256 | 29658 | 51.9 | 0.67x | 56.8% | 1.7/4 |
 
-### Speedup Results — d8 (draft) + d24 (target)
+### 加速实测表 — d8 (draft) + d24 (target)
 
 | K | temp | max_tok | wall_ms | tok/s | speedup | accept% | avg_acc/round |
 |---|---|---|---|---|---|---|---|
@@ -134,42 +134,73 @@ acceptance_rate = stats['total_accepted'] / stats['total_draft']
 | 4 | 0.0 | 256 | 26286 | 60.5 | 0.82x | 45.9% | 1.7/4 |
 | 4 | 0.7 | 256 | 31140 | 51.7 | 0.64x | 42.3% | 1.6/4 |
 
-### 3. Analysis — Why No Speedup
+### 3. 场景分析 — 为何未实现加速
 
-**All configurations show speedup < 1x (0.55x–0.82x).** This is expected for this hardware/model combination:
+**所有配置 speedup 均 < 1x（0.55x–0.82x）。** 这在当前硬件/模型组合下是预期的：
 
-1. **H100 memory bandwidth is too high.** Speculative decoding helps when decode is memory-bandwidth bound and the GPU is underutilized. H100 SXM with 3.35 TB/s HBM3 bandwidth already pushes d24 (1.38B) at ~77 tok/s — near the compute-bandwidth equilibrium. There's little idle compute to amortize the draft overhead.
+1. **H100 显存带宽过高。** Speculative decoding 在 decode 阶段为 memory-bandwidth bound、GPU 计算利用率低时才有效。H100 SXM 的 3.35 TB/s HBM3 带宽已经将 d24（1.38B）推到 ~77 tok/s——接近计算-带宽平衡点。几乎没有空闲算力来摊销 draft 开销。
 
-2. **Draft-to-target ratio is too small.** d12/d24 is only ~5x parameter ratio; d8/d24 is ~15x. Typical speculative decoding papers use 10–100x ratios (e.g., 7B target + 68M draft). With nanochat's small models, both draft and target T=1 forwards are fast (~4–13ms), so the K draft forwards add significant relative overhead.
+2. **Draft/Target 体量比太小。** d12/d24 仅 ~5x 参数比；d8/d24 为 ~15x。典型论文使用 10–100x 比例（如 7B target + 68M draft）。nanochat 的小模型下，draft 和 target 的 T=1 forward 都很快（~4–13ms），K 次 draft forward 的相对开销很大。
 
-3. **Per-round overhead.** Each speculative round requires: K × draft T=1 + 1 × target T=K + 1 × target T=1 + 1 × draft T=1 + rollback + `_compute_prev_embedding`. Even with ~50% acceptance, the overhead exceeds the savings.
+3. **每轮固定开销。** 每轮需要：K × draft T=1 + 1 × target T=K + 1 × target T=1 + 1 × draft T=1 + 回滚 + `_compute_prev_embedding`。即使 ~50% acceptance，开销仍超过节省。
 
-4. **No `torch.compile` in inference.** The benchmark runs uncompiled models. Compiled target+draft could shift the balance.
+4. **推理未使用 `torch.compile`。** Benchmark 运行的是未编译模型。编译后的 target+draft 可能改善平衡。
 
-**Where speculative decoding WOULD help:**
-- Consumer GPUs with low bandwidth (RTX 4090: 1 TB/s, A6000: 768 GB/s)
-- Larger target models (>10B params) where T=1 decode is genuinely slow
-- Very fast draft models (e.g., n-gram model, or small Transformer with quantization)
+**Speculative decoding 适用场景：**
+- 低带宽消费级 GPU（RTX 4090: 1 TB/s, A6000: 768 GB/s）
+- 大 target 模型（>10B params），T=1 decode 本身慢
+- 极快的 draft 模型（如 n-gram 模型、量化后的小 Transformer）
 
-## Known limitations
+## d24 模型评估结果
 
-1. **Batch size = 1 only:** Does not combine with `generate_multi()` batch generation
-2. **No tool-use:** Calculator/python tool tokens are treated as regular tokens (no `<|python_start|>` state machine)
-3. **Same GPU:** Both models must fit on a single GPU (no model parallelism)
-4. **Same vocab:** Draft and target must share the same tokenizer (nanochat satisfies this by design)
-5. **Draft model quality matters for speed (not correctness):** Poor draft → low acceptance rate → less speedup, but output is always exact target distribution
+训练配置参照 `speedrun.sh`：`--depth=24 --target-param-data-ratio=8 --fp8`，8×H100 SXM，总训练时间 99 分钟。
 
-## Files modified
+### Pretrain
 
-| File | Changes |
+| 指标 | d12 | d24 |
+|---|---|---|
+| 参数量 | 286M | 1.38B |
+| Val bpb | 0.868 | **0.716** |
+| CORE | — | **0.267** |
+| 训练步数 | 5000 | 5568 |
+| 训练时间 | 90m (1×H100) | 99m (8×H100) |
+
+### SFT + Safety
+
+| 指标 | d12 SFT | d24 SFT |
+|---|---|---|
+| Val bpb | 0.356 | **0.274** |
+| ChatCORE | 0.254 | **0.365** |
+| Safety 拒绝率 | 4% (baseline) | **12%** |
+
+### AIME
+
+| 数据集 | d12 | d24 |
+|---|---|---|
+| AIME-2024 | 0/30 (0%) | 0/30 (0%) |
+| AIME-2025 | 1/30 (3.3%) | 1/30 (3.3%) |
+
+AIME 结果与 d12 一致——1.38B 规模的模型无法解决竞赛数学题。
+
+## 已知限制
+
+1. **Batch size = 1：** 不与 `generate_multi()` 批量生成组合
+2. **不处理 tool-use：** Calculator/python tool token 当作普通 token（无 `<|python_start|>` 状态机）
+3. **同 GPU：** 两个模型必须在同一 GPU 上（无模型并行）
+4. **同词表：** Draft 和 target 必须共享 tokenizer（nanochat 天然满足）
+5. **Draft 质量影响速度不影响正确性：** Draft 质量差 → acceptance rate 低 → 加速少，但输出始终是 target 分布
+
+## 修改文件
+
+| 文件 | 改动 |
 |---|---|
 | `nanochat/engine.py` | `_apply_sampling_filter`, `_rms_norm_fallback`, `_get_kv_model_kwargs_from`, `_compute_prev_embedding`, `KVCache.save_state/restore_state`, `Engine.generate_speculative` |
-| `nanochat/gpt.py` | Smear fix: apply `prev_embedding` to position 0 in T>1 KV cache path (3 lines) |
-| `scripts/bench_speculative.py` | New: benchmark script |
-| `tests/test_engine.py` | +6 tests for speculative decoding |
-| `README_speculative_decoding.md` | This document |
+| `nanochat/gpt.py` | Smear 修复：T>1 KV cache 路径对 position 0 应用 `prev_embedding`（3 行） |
+| `scripts/bench_speculative.py` | 新文件：benchmark 脚本 |
+| `tests/test_engine.py` | +6 个 speculative decoding 测试 |
+| `README_speculative_decoding.md` | 本文档 |
 
-## References
+## 参考文献
 
 - Leviathan, Y., Kalman, M., & Matias, Y. (2023). Fast Inference from Transformers via Speculative Decoding. ICML.
 - Chen, C., et al. (2023). Accelerating Large Language Model Decoding with Speculative Sampling. arXiv:2302.01318.
