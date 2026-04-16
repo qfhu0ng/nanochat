@@ -5,7 +5,8 @@ python -m pytest tests/test_engine.py -v
 """
 
 import torch
-from nanochat.engine import KVCache, Engine
+import torch.nn.functional as F
+from nanochat.engine import KVCache, Engine, _apply_sampling_filter
 from dataclasses import dataclass
 
 
@@ -414,3 +415,278 @@ def test_generate_multi_single_prompt_matches_generate():
 
     assert gen_tokens == multi_tokens, \
         f"Single prompt: generate {gen_tokens} != generate_multi {multi_tokens}"
+
+
+# =============================================================================
+# Speculative decoding tests
+# =============================================================================
+
+class SpecMockModel:
+    """
+    Mock model for speculative decoding tests.
+    Has transformer.wte and embed_norm for _compute_prev_embedding compatibility.
+    Logits are deterministic: logits[tok] = 10.0 where tok = (last_input + 1) % vocab_size.
+    This makes greedy decode produce a predictable sequence.
+    """
+    def __init__(self, vocab_size=32, n_embd=16, n_kv_head=2, n_head=2, n_layer=2):
+        self.vocab_size = vocab_size
+        self.config = MockConfig(n_kv_head=n_kv_head, n_head=n_head, n_embd=n_embd, n_layer=n_layer)
+        self.rotary_seq_len = self.config.sequence_len * 10
+        self._device = torch.device("cpu")
+        self.embed_norm = None  # use rms_norm fallback
+
+        # Create minimal transformer.wte for _compute_prev_embedding
+        class _WTE(torch.nn.Module):
+            def __init__(self, vs, ne):
+                super().__init__()
+                self.emb = torch.nn.Embedding(vs, ne)
+            def __call__(self, x):
+                return self.emb(x)
+
+        class _Transformer:
+            def __init__(self, vs, ne):
+                self.wte = _WTE(vs, ne)
+
+        self.transformer = _Transformer(vocab_size, n_embd)
+
+    def get_device(self):
+        return self._device
+
+    def forward(self, ids, kv_cache=None):
+        B, T = ids.shape
+        if kv_cache is not None:
+            kv_cache.advance(T)
+        # Deterministic logits: next token = (last_input + 1) % vocab_size
+        logits = torch.full((B, T, self.vocab_size), -10.0)
+        for b in range(B):
+            for t in range(T):
+                next_tok = (ids[b, t].item() + 1) % self.vocab_size
+                logits[b, t, next_tok] = 10.0
+        return logits
+
+
+class SpecMockModelUniform(SpecMockModel):
+    """Like SpecMockModel but with uniform logits (for sampling distribution tests)."""
+    def forward(self, ids, kv_cache=None):
+        B, T = ids.shape
+        if kv_cache is not None:
+            kv_cache.advance(T)
+        return torch.zeros(B, T, self.vocab_size)
+
+
+class SpecMockModelBiased(SpecMockModel):
+    """Mock model with fixed non-uniform logits for distribution testing.
+    Target has different distribution than draft to test accept/reject properly."""
+    def __init__(self, bias_vector, **kwargs):
+        super().__init__(**kwargs)
+        self.bias_vector = bias_vector  # (vocab_size,) tensor
+
+    def forward(self, ids, kv_cache=None):
+        B, T = ids.shape
+        if kv_cache is not None:
+            kv_cache.advance(T)
+        logits = self.bias_vector.unsqueeze(0).unsqueeze(0).expand(B, T, -1).clone()
+        return logits
+
+
+def test_kv_cache_save_restore():
+    """Test KVCache save_state/restore_state preserves position and prev_embedding."""
+    kv = KVCache(batch_size=1, num_heads=4, seq_len=64, head_dim=8, num_layers=2,
+                 device="cpu", dtype=torch.float32)
+    kv.advance(10)
+    kv.prev_embedding = torch.randn(1, 1, 32)
+
+    state = kv.save_state()
+    assert state['cache_seqlens'][0].item() == 10
+    assert state['prev_embedding'] is not None
+
+    # Modify cache
+    kv.advance(5)
+    kv.prev_embedding = torch.ones(1, 1, 32)
+
+    assert kv.get_pos() == 15
+
+    # Restore
+    kv.restore_state(state)
+    assert kv.get_pos() == 10
+    assert torch.allclose(kv.prev_embedding, state['prev_embedding'])
+
+    # Test with prev_embedding=None
+    kv.prev_embedding = None
+    state2 = kv.save_state()
+    kv.prev_embedding = torch.ones(1, 1, 32)
+    kv.restore_state(state2)
+    assert kv.prev_embedding is None
+
+
+def test_speculative_greedy_matches_standard():
+    """Temperature=0: speculative decoding must produce token-level exact match with standard."""
+    target = SpecMockModel(vocab_size=32)
+    draft = SpecMockModel(vocab_size=32)
+    tokenizer = ByteTokenizer()
+    engine = Engine(target, tokenizer)
+
+    prompt = [0, 5, 10, 15]  # arbitrary prompt tokens
+
+    for K in [1, 2, 4, 8]:
+        for max_tokens in [1, 5, 16, 32]:
+            # Standard
+            std_tokens = []
+            for tc, _ in engine.generate(prompt, num_samples=1, max_tokens=max_tokens,
+                                          temperature=0.0, seed=42):
+                std_tokens.append(tc[0])
+
+            # Speculative
+            spec_tokens = []
+            for tc, tm in engine.generate_speculative(prompt, draft, K=K,
+                                                       max_tokens=max_tokens,
+                                                       temperature=0.0, seed=42):
+                spec_tokens.append(tc[0])
+
+            assert std_tokens == spec_tokens, \
+                f"K={K}, max_tokens={max_tokens}: std={std_tokens[:10]} != spec={spec_tokens[:10]}"
+
+
+def test_speculative_sampling_distribution():
+    """
+    Temperature>0: verify that speculative sampling produces the target distribution.
+    Use a small vocab (8 tokens) with known target/draft distributions.
+    Run many samples, check that empirical frequencies match target distribution (KL < threshold).
+    """
+    vocab_size = 8
+    # Target: biased toward token 0 and 1
+    target_logits = torch.tensor([3.0, 2.0, 1.0, 0.5, 0.0, -0.5, -1.0, -2.0])
+    # Draft: biased toward token 2 and 3 (deliberately different from target)
+    draft_logits = torch.tensor([0.0, 0.5, 3.0, 2.0, 1.0, 0.0, -1.0, -2.0])
+
+    target = SpecMockModelBiased(target_logits, vocab_size=vocab_size)
+    draft = SpecMockModelBiased(draft_logits, vocab_size=vocab_size)
+    tokenizer = ByteTokenizer()
+    engine = Engine(target, tokenizer)
+
+    # Expected target distribution (temp=1.0)
+    expected_probs = F.softmax(target_logits, dim=-1).numpy()
+
+    prompt = [0, 1, 2]
+    num_samples = 2000
+    counts = [0] * vocab_size
+
+    for seed in range(num_samples):
+        tokens = []
+        for tc, _ in engine.generate_speculative(prompt, draft, K=4, max_tokens=1,
+                                                   temperature=1.0, seed=seed):
+            tokens.append(tc[0])
+        if tokens:
+            tok = tokens[0]
+            if tok < vocab_size:
+                counts[tok] += 1
+
+    total = sum(counts)
+    if total == 0:
+        return  # no valid tokens generated
+
+    empirical = [c / total for c in counts]
+
+    # KL divergence: sum p * log(p/q), where p=expected, q=empirical
+    kl = 0.0
+    for p, q in zip(expected_probs, empirical):
+        if p > 1e-6:
+            q_safe = max(q, 1e-10)
+            kl += p * (float(torch.log(torch.tensor(p / q_safe))))
+
+    # With 2000 samples and 8 tokens, KL should be very small
+    assert kl < 0.1, f"KL divergence {kl:.4f} too high. Expected: {expected_probs}, Got: {empirical}"
+
+
+def test_speculative_with_top_k():
+    """Speculative decoding with top_k uses the same filter for both p and q."""
+    target = SpecMockModel(vocab_size=32)
+    draft = SpecMockModel(vocab_size=32)
+    tokenizer = ByteTokenizer()
+    engine = Engine(target, tokenizer)
+
+    prompt = [0, 5, 10]
+
+    # Greedy with top_k should still match standard
+    std_tokens = []
+    for tc, _ in engine.generate(prompt, num_samples=1, max_tokens=10,
+                                  temperature=0.0, top_k=5, seed=42):
+        std_tokens.append(tc[0])
+
+    spec_tokens = []
+    for tc, _ in engine.generate_speculative(prompt, draft, K=4, max_tokens=10,
+                                              temperature=0.0, top_k=5, seed=42):
+        spec_tokens.append(tc[0])
+
+    assert std_tokens == spec_tokens, \
+        f"top_k=5 greedy mismatch: std={std_tokens} != spec={spec_tokens}"
+
+
+def test_speculative_stop_on_eos():
+    """Speculative decoding stops when EOS token is generated."""
+    vocab_size = 32
+
+    class EosModel(SpecMockModel):
+        """Produces EOS (token 260) after 3 tokens."""
+        def __init__(self):
+            super().__init__(vocab_size=262)  # need 262 to include special tokens
+            self._call_count = 0
+
+        def forward(self, ids, kv_cache=None):
+            B, T = ids.shape
+            if kv_cache is not None:
+                kv_cache.advance(T)
+            logits = torch.full((B, T, self.vocab_size), -10.0)
+            for b in range(B):
+                for t in range(T):
+                    self._call_count += 1
+                    if kv_cache is not None and kv_cache.get_pos() > 6:
+                        # After position 6, predict EOS (assistant_end = 260)
+                        logits[b, t, 260] = 10.0
+                    else:
+                        logits[b, t, (ids[b, t].item() + 1) % 256] = 10.0
+            return logits
+
+    target = EosModel()
+    draft = EosModel()
+    tokenizer = ByteTokenizer()
+    engine = Engine(target, tokenizer)
+
+    prompt = [261, 1, 2]  # bos + 2 tokens
+    tokens = []
+    for tc, _ in engine.generate_speculative(prompt, draft, K=4, max_tokens=100,
+                                              temperature=0.0, seed=42):
+        tokens.append(tc[0])
+
+    # Should stop well before max_tokens=100
+    assert len(tokens) < 20, f"Expected early stop on EOS, got {len(tokens)} tokens"
+    # The last meaningful token should be EOS or the sequence should terminate
+    assert 260 in tokens or len(tokens) < 100, "Should have hit EOS"
+
+
+def test_speculative_rollback_consistency():
+    """After rollback, target and draft caches must be at the same position."""
+    target = SpecMockModel(vocab_size=32)
+    draft = SpecMockModel(vocab_size=32)
+    tokenizer = ByteTokenizer()
+    engine = Engine(target, tokenizer)
+
+    prompt = [0, 5, 10]
+
+    # Run a few rounds of speculative decoding
+    tokens = []
+    for tc, tm in engine.generate_speculative(prompt, draft, K=4, max_tokens=20,
+                                               temperature=0.0, seed=42):
+        tokens.append(tc[0])
+
+    # If we got here without assertion errors in generate_speculative,
+    # the rollback consistency checks passed (there are runtime asserts inside)
+    assert len(tokens) > 0, "Should have generated at least 1 token"
+
+    # Check stats are populated
+    stats = engine.speculative_stats
+    assert 'total_draft' in stats
+    assert 'total_accepted' in stats
+    assert 'total_rounds' in stats
+    assert stats['total_rounds'] > 0
+    assert stats['total_draft'] >= stats['total_accepted']

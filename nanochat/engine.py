@@ -124,6 +124,24 @@ class KVCache:
         """Check if all batch elements are at the same cache position."""
         return self.batch_size == 1 or (self.cache_seqlens == self.cache_seqlens[0]).all().item()
 
+    def save_state(self):
+        """Save cache position and smear state for rollback (speculative decoding)."""
+        return {
+            'cache_seqlens': self.cache_seqlens.clone(),
+            'prev_embedding': self.prev_embedding.clone() if self.prev_embedding is not None else None,
+        }
+
+    def restore_state(self, state):
+        """Restore cache position and smear state from a saved snapshot."""
+        self.cache_seqlens.copy_(state['cache_seqlens'])
+        if state['prev_embedding'] is not None:
+            if self.prev_embedding is not None:
+                self.prev_embedding.copy_(state['prev_embedding'])
+            else:
+                self.prev_embedding = state['prev_embedding'].clone()
+        else:
+            self.prev_embedding = None
+
     def copy_from_single(self, other, batch_idx):
         """Copy batch=1 cache into a specific batch slot of this cache."""
         assert other.batch_size == 1, f"Source cache must be batch=1, got {other.batch_size}"
@@ -160,11 +178,18 @@ class KVCache:
 
 # -----------------------------------------------------------------------------
 @torch.inference_mode()
-def sample_next_token(logits, rng, temperature=1.0, top_k=None, top_p=None):
-    """Sample a single next token from given logits of shape (B, vocab_size). Returns (B, 1)."""
-    assert temperature >= 0.0, "temperature must be non-negative"
-    if temperature == 0.0:
-        return torch.argmax(logits, dim=-1, keepdim=True)
+def _apply_sampling_filter(logits, temperature, top_k=None, top_p=None):
+    """Apply temp → top_k → top_p → softmax. Returns filtered probability distribution.
+    SINGLE source of truth for both draft sampling and target verification in speculative decoding.
+    Args:
+        logits: (B, vocab_size) raw logits
+        temperature: must be > 0 (use argmax for greedy)
+        top_k: if set, keep only top-k logits
+        top_p: if set, nucleus filtering threshold
+    Returns:
+        probs: (B, vocab_size) filtered probability distribution
+    """
+    assert temperature > 0, "Use argmax for greedy, not this function"
     logits = logits / temperature
     # Top-k filtering
     if top_k is not None and top_k > 0:
@@ -176,14 +201,46 @@ def sample_next_token(logits, rng, temperature=1.0, top_k=None, top_p=None):
     if top_p is not None and 0.0 < top_p < 1.0:
         sorted_logits, sorted_idx = torch.sort(logits, descending=True, dim=-1)
         cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
-        # Remove tokens with cumulative probability above top_p (keep first token above threshold)
         remove_mask = cumulative_probs - F.softmax(sorted_logits, dim=-1) >= top_p
         sorted_logits[remove_mask] = float('-inf')
         logits.scatter_(1, sorted_idx, sorted_logits)
-    probs = F.softmax(logits, dim=-1)
+    return F.softmax(logits, dim=-1)
+
+@torch.inference_mode()
+def sample_next_token(logits, rng, temperature=1.0, top_k=None, top_p=None):
+    """Sample a single next token from given logits of shape (B, vocab_size). Returns (B, 1)."""
+    assert temperature >= 0.0, "temperature must be non-negative"
+    if temperature == 0.0:
+        return torch.argmax(logits, dim=-1, keepdim=True)
+    probs = _apply_sampling_filter(logits, temperature, top_k, top_p)
     return torch.multinomial(probs, num_samples=1, generator=rng)
 
 # -----------------------------------------------------------------------------
+
+def _get_kv_model_kwargs_from(model):
+    """Extract KV cache construction kwargs from any model's config."""
+    m = model.config
+    return {"num_heads": m.n_kv_head, "head_dim": m.n_embd // m.n_head, "num_layers": m.n_layer}
+
+def _rms_norm_fallback(x):
+    """RMS norm for when F.rms_norm is unavailable (older PyTorch)."""
+    return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + 1e-6)
+
+@torch.inference_mode()
+def _compute_prev_embedding(model, token_id, device):
+    """Recompute prev_embedding (post-embed_norm) for a single token.
+    Used to restore smear state after KV cache rollback in speculative decoding."""
+    ids = torch.tensor([[token_id]], dtype=torch.long, device=device)
+    x = model.transformer.wte(ids)
+    dtype = torch.bfloat16 if device.type == "cuda" else torch.float32
+    x = x.to(dtype)
+    if model.embed_norm is not None:
+        x = model.embed_norm(x)
+    elif hasattr(F, 'rms_norm'):
+        x = F.rms_norm(x, (x.size(-1),))
+    else:
+        x = _rms_norm_fallback(x)
+    return x  # (1, 1, n_embd)
 
 class RowState:
     # Per-row state tracking during generation
@@ -206,8 +263,7 @@ class Engine:
         return device, dtype
 
     def _get_kv_model_kwargs(self):
-        m = self.model.config
-        return {"num_heads": m.n_kv_head, "head_dim": m.n_embd // m.n_head, "num_layers": m.n_layer}
+        return _get_kv_model_kwargs_from(self.model)
 
     @torch.inference_mode()
     def _decode_loop(self, logits, kv_cache, row_states, max_tokens, temperature, top_k, top_p, rng):
@@ -430,6 +486,211 @@ class Engine:
             if all(completed):
                 break
         return results, masks
+
+    @torch.inference_mode()
+    def generate_speculative(self, tokens, draft_model, K=4, max_tokens=None,
+                             temperature=1.0, top_k=None, top_p=None, seed=42):
+        """
+        Speculative decoding: use draft_model to propose K tokens, target model (self.model)
+        verifies in one forward pass. Produces the exact same distribution as standard AR decode.
+
+        Batch size = 1 only. Tool-use (calculator) is NOT handled — tool tokens are treated as
+        regular tokens. Use standard generate() for tool-use scenarios.
+
+        Args:
+            tokens: list of int (prompt token ids)
+            draft_model: smaller model sharing the same tokenizer/vocab
+            K: number of draft tokens per round
+            max_tokens: max new tokens to generate
+            temperature, top_k, top_p: sampling parameters (same filter for p and q)
+            seed: random seed
+
+        Yields:
+            (token_column, token_masks) per token:
+                token_column = [tok] (length 1)
+                token_masks = [1] if draft-accepted, [0] if correction/bonus
+
+        After generation completes, self.speculative_stats contains:
+            {'total_draft': N, 'total_accepted': M, 'total_rounds': R}
+        """
+        assert isinstance(tokens, list) and isinstance(tokens[0], int), "expecting list of ints"
+        device, dtype = self._get_device_dtype()
+        rng = torch.Generator(device=device)
+        rng.manual_seed(seed)
+
+        eos_tokens = {self.tokenizer.encode_special("<|assistant_end|>"),
+                      self.tokenizer.get_bos_token_id()}
+
+        # --- Prefill both models ---
+        target_kw = _get_kv_model_kwargs_from(self.model)
+        draft_kw = _get_kv_model_kwargs_from(draft_model)
+        prompt_len = len(tokens)
+        kv_len = (prompt_len + max_tokens) if max_tokens is not None else self.model.config.sequence_len
+
+        target_cache = KVCache(batch_size=1, seq_len=kv_len, device=device, dtype=dtype, **target_kw)
+        draft_cache = KVCache(batch_size=1, seq_len=kv_len, device=device, dtype=dtype, **draft_kw)
+
+        ids = torch.tensor([tokens], dtype=torch.long, device=device)
+        target_logits = self.model.forward(ids, kv_cache=target_cache)[:, -1, :]   # (1, V)
+        draft_logits = draft_model.forward(ids, kv_cache=draft_cache)[:, -1, :]     # (1, V)
+
+        # --- Stats ---
+        total_draft = 0
+        total_accepted = 0
+        total_rounds = 0
+        num_generated = 0
+        finished = False
+
+        while not finished:
+            if max_tokens is not None and num_generated >= max_tokens:
+                break
+
+            # Adjust K for remaining budget
+            k = K
+            if max_tokens is not None:
+                k = min(k, max_tokens - num_generated)
+            if k <= 0:
+                break
+
+            # Save states for rollback
+            target_state = target_cache.save_state()
+            draft_state = draft_cache.save_state()
+
+            # --- Draft phase: K times T=1 ---
+            draft_tokens = []
+            draft_probs_list = []  # q distributions (only for sampling)
+            d_logits = draft_logits
+
+            for _ in range(k):
+                if temperature == 0.0:
+                    tok = torch.argmax(d_logits, dim=-1, keepdim=True)
+                else:
+                    q = _apply_sampling_filter(d_logits, temperature, top_k, top_p)
+                    draft_probs_list.append(q)
+                    tok = torch.multinomial(q, num_samples=1, generator=rng)
+                draft_tokens.append(tok.item())
+                d_logits = draft_model.forward(tok.view(1, 1), kv_cache=draft_cache)[:, -1, :]
+
+            total_draft += k
+            total_rounds += 1
+
+            # --- Verify phase: 1 forward T=K on target ---
+            verify_ids = torch.tensor([draft_tokens], dtype=torch.long, device=device)
+            verify_logits = self.model.forward(verify_ids, kv_cache=target_cache)  # (1, K, V)
+
+            # --- Accept / reject ---
+            n_accepted = 0
+            correction_token = None
+
+            for i in range(k):
+                # Target logits for verifying draft_tokens[i]
+                t_logits_i = target_logits if i == 0 else verify_logits[:, i - 1, :]
+
+                if temperature == 0.0:
+                    # Greedy: accept iff argmax matches
+                    target_tok = torch.argmax(t_logits_i, dim=-1).item()
+                    if target_tok == draft_tokens[i]:
+                        n_accepted += 1
+                    else:
+                        correction_token = target_tok
+                        break
+                else:
+                    # Sampling: accept with prob min(1, p(x)/q(x))
+                    p = _apply_sampling_filter(t_logits_i, temperature, top_k, top_p)
+                    q = draft_probs_list[i]
+                    draft_tok = draft_tokens[i]
+
+                    p_val = p[0, draft_tok].item()
+                    q_val = q[0, draft_tok].item()
+
+                    if q_val > 0:
+                        accept_prob = min(1.0, p_val / q_val)
+                        r = torch.rand(1, generator=rng, device=device).item()
+                        if r < accept_prob:
+                            n_accepted += 1
+                            continue
+
+                    # Rejected: resample from norm(max(0, p - q))
+                    residual = torch.clamp(p[0] - q[0], min=0)
+                    residual_sum = residual.sum()
+                    if residual_sum > 0:
+                        residual = residual / residual_sum
+                        correction_token = torch.multinomial(
+                            residual.unsqueeze(0), num_samples=1, generator=rng).item()
+                    else:
+                        correction_token = torch.multinomial(
+                            p, num_samples=1, generator=rng).item()
+                    break
+
+            # Bonus token if all K accepted
+            if n_accepted == k and correction_token is None:
+                bonus_logits = verify_logits[:, k - 1, :]
+                if temperature == 0.0:
+                    correction_token = torch.argmax(bonus_logits, dim=-1).item()
+                else:
+                    bonus_probs = _apply_sampling_filter(bonus_logits, temperature, top_k, top_p)
+                    correction_token = torch.multinomial(
+                        bonus_probs, num_samples=1, generator=rng).item()
+
+            total_accepted += n_accepted
+
+            # --- Yield accepted draft tokens ---
+            for i in range(n_accepted):
+                yield [draft_tokens[i]], [1]
+                num_generated += 1
+                if draft_tokens[i] in eos_tokens:
+                    finished = True
+                    break
+                if max_tokens is not None and num_generated >= max_tokens:
+                    finished = True
+                    break
+            if finished:
+                break
+
+            # --- Yield correction / bonus token ---
+            if correction_token is not None:
+                yield [correction_token], [0]
+                num_generated += 1
+                if correction_token in eos_tokens:
+                    finished = True
+                    break
+
+            if max_tokens is not None and num_generated >= max_tokens:
+                break
+
+            # --- Rollback & advance both caches ---
+            # Restore to pre-draft position, then truncate to accepted length.
+            # KV entries at positions P..P+n_accepted-1 are still valid from
+            # the verify/draft forwards, so we just adjust seqlens + prev_embedding.
+            target_cache.restore_state(target_state)
+            draft_cache.restore_state(draft_state)
+
+            if n_accepted > 0:
+                target_cache.cache_seqlens += n_accepted
+                draft_cache.cache_seqlens += n_accepted
+                prev_emb_target = _compute_prev_embedding(
+                    self.model, draft_tokens[n_accepted - 1], device)
+                prev_emb_draft = _compute_prev_embedding(
+                    draft_model, draft_tokens[n_accepted - 1], device)
+                target_cache.prev_embedding = prev_emb_target
+                draft_cache.prev_embedding = prev_emb_draft
+
+            # Forward correction/bonus token through both models (T=1)
+            # to get logits for the next round and update caches
+            corr_ids = torch.tensor([[correction_token]], dtype=torch.long, device=device)
+            target_logits = self.model.forward(corr_ids, kv_cache=target_cache)[:, -1, :]
+            draft_logits = draft_model.forward(corr_ids, kv_cache=draft_cache)[:, -1, :]
+
+            # Consistency assertions
+            assert (target_cache.cache_seqlens == draft_cache.cache_seqlens).all(), \
+                f"target/draft cache position mismatch: {target_cache.cache_seqlens} vs {draft_cache.cache_seqlens}"
+
+        # Store stats as engine attribute
+        self.speculative_stats = {
+            'total_draft': total_draft,
+            'total_accepted': total_accepted,
+            'total_rounds': total_rounds,
+        }
 
 
 if __name__ == "__main__":
