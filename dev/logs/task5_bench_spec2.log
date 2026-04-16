@@ -1,0 +1,86 @@
+Autodetected device type: cuda
+2026-04-16 01:43:31,794 - nanochat.common - [32m[1mINFO[0m - Distributed world size: 1
+Loading target model...
+2026-04-16 01:43:31,794 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Loading model from /workspace/nanochat_data/chatsft_checkpoints/d24 with step 484
+2026-04-16 01:43:34,168 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Patching missing mlp_variant in model config to 'relu2'
+2026-04-16 01:43:34,168 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Patching missing attn_variant in model config to 'standard'
+2026-04-16 01:43:34,168 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Patching missing use_learnable_norm in model config to False
+2026-04-16 01:43:34,168 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Patching missing kv_lora_rank in model config to 256
+2026-04-16 01:43:34,168 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Patching missing rope_head_dim in model config to 64
+2026-04-16 01:43:34,168 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Building model with config: {'sequence_len': 2048, 'vocab_size': 32768, 'n_layer': 24, 'n_head': 12, 'n_kv_head': 12, 'n_embd': 1536, 'window_pattern': 'SSSL', 'mlp_variant': 'relu2', 'attn_variant': 'standard', 'use_learnable_norm': False, 'kv_lora_rank': 256, 'rope_head_dim': 64}
+Loading draft model...
+2026-04-16 01:43:34,298 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Loading model from /workspace/nanochat_data/chatsft_checkpoints/d12 with step 967
+2026-04-16 01:43:34,693 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Patching missing mlp_variant in model config to 'relu2'
+2026-04-16 01:43:34,694 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Patching missing attn_variant in model config to 'standard'
+2026-04-16 01:43:34,694 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Patching missing use_learnable_norm in model config to False
+2026-04-16 01:43:34,694 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Patching missing kv_lora_rank in model config to 256
+2026-04-16 01:43:34,694 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Patching missing rope_head_dim in model config to 64
+2026-04-16 01:43:34,694 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Building model with config: {'sequence_len': 2048, 'vocab_size': 32768, 'n_layer': 12, 'n_head': 6, 'n_kv_head': 6, 'n_embd': 768, 'window_pattern': 'SSSL', 'mlp_variant': 'relu2', 'attn_variant': 'standard', 'use_learnable_norm': False, 'kv_lora_rank': 256, 'rope_head_dim': 64}
+
+Speculative Decoding Benchmark
+==========================================================================================
+Device: cuda
+Target: sft/d24 (24L)
+Draft:  sft/d12 (12L)
+Prompts: 8, Seed: 42
+
+--- max_tokens=64, temperature=0.0 ---
+  Standard AR:  6767.5ms total, 75.7 tok/s, 512 tokens
+  K=2: 9629.6ms, 53.2 tok/s, speedup=0.70x, accept=74.5%, avg_accepted/round=1.5/2, correct=PASS
+  K=4: 9427.5ms, 54.3 tok/s, speedup=0.72x, accept=56.8%, avg_accepted/round=2.2/4, correct=PASS
+  K=6: 9222.6ms, 55.5 tok/s, speedup=0.73x, accept=51.1%, avg_accepted/round=3.0/6, correct=PASS
+  K=8: 9969.3ms, 51.4 tok/s, speedup=0.68x, accept=43.6%, avg_accepted/round=3.3/8, correct=PASS
+
+--- max_tokens=64, temperature=0.7 ---
+  Standard AR:  6430.4ms total, 75.3 tok/s, 484 tokens
+  K=2: 10735.1ms, 47.7 tok/s, speedup=0.60x, accept=62.1%, avg_accepted/round=1.2/2, correct=N/A
+  K=4: 9505.7ms, 53.9 tok/s, speedup=0.68x, accept=56.1%, avg_accepted/round=2.2/4, correct=N/A
+  K=6: 10908.9ms, 46.9 tok/s, speedup=0.59x, accept=41.6%, avg_accepted/round=2.4/6, correct=N/A
+  K=8: 11168.5ms, 45.8 tok/s, speedup=0.58x, accept=38.2%, avg_accepted/round=3.0/8, correct=N/A
+
+--- max_tokens=256, temperature=0.0 ---
+  Standard AR:  21580.0ms total, 77.2 tok/s, 1667 tokens
+    MISMATCH prompt 1: std len=256, spec len=256
+    First diff at token 218: std=2710, spec=483
+  K=2: 29697.2ms, 53.5 tok/s, speedup=0.73x, accept=68.8%, avg_accepted/round=1.5/2, correct=FAIL
+    MISMATCH prompt 1: std len=256, spec len=256
+    First diff at token 218: std=2710, spec=483
+  K=4: 28323.7ms, 56.1 tok/s, speedup=0.76x, accept=56.9%, avg_accepted/round=2.1/4, correct=FAIL
+    MISMATCH prompt 1: std len=256, spec len=256
+    First diff at token 218: std=2710, spec=483
+  K=6: 30585.4ms, 54.5 tok/s, speedup=0.71x, accept=47.9%, avg_accepted/round=2.7/6, correct=FAIL
+    MISMATCH prompt 1: std len=256, spec len=256
+    First diff at token 218: std=2710, spec=483
+  K=8: 31416.3ms, 50.6 tok/s, speedup=0.69x, accept=38.9%, avg_accepted/round=3.0/8, correct=FAIL
+
+--- max_tokens=256, temperature=0.7 ---
+  Standard AR:  20018.4ms total, 76.3 tok/s, 1528 tokens
+  K=2: 29676.4ms, 49.5 tok/s, speedup=0.67x, accept=40.8%, avg_accepted/round=1.6/2, correct=N/A
+  K=4: 29658.3ms, 51.9 tok/s, speedup=0.67x, accept=56.8%, avg_accepted/round=1.7/4, correct=N/A
+  K=6: 33644.3ms, 47.4 tok/s, speedup=0.60x, accept=43.3%, avg_accepted/round=2.4/6, correct=N/A
+  K=8: 36169.0ms, 44.0 tok/s, speedup=0.55x, accept=36.8%, avg_accepted/round=2.6/8, correct=N/A
+
+
+==========================================================================================
+Summary Table
+==========================================================================================
+  K  temp  max_tok   wall_ms    tok/s  speedup  accept%  avg_acc  correct
+-------------------------------------------------------------------------
+  2   0.0       64    9629.6     53.2     0.70   74.5%      1.5     PASS
+  4   0.0       64    9427.5     54.3     0.72   56.8%      2.2     PASS
+  6   0.0       64    9222.6     55.5     0.73   51.1%      3.0     PASS
+  8   0.0       64    9969.3     51.4     0.68   43.6%      3.3     PASS
+  2   0.7       64   10735.1     47.7     0.60   62.1%      1.2      N/A
+  4   0.7       64    9505.7     53.9     0.68   56.1%      2.2      N/A
+  6   0.7       64   10908.9     46.9     0.59   41.6%      2.4      N/A
+  8   0.7       64   11168.5     45.8     0.58   38.2%      3.0      N/A
+  2   0.0      256   29697.2     53.5     0.73   68.8%      1.5     FAIL
+  4   0.0      256   28323.7     56.1     0.76   56.9%      2.1     FAIL
+  6   0.0      256   30585.4     54.5     0.71   47.9%      2.7     FAIL
+  8   0.0      256   31416.3     50.6     0.69   38.9%      3.0     FAIL
+  2   0.7      256   29676.4     49.5     0.67   40.8%      1.6      N/A
+  4   0.7      256   29658.3     51.9     0.67   56.8%      1.7      N/A
+  6   0.7      256   33644.3     47.4     0.60   43.3%      2.4      N/A
+  8   0.7      256   36169.0     44.0     0.55   36.8%      2.6      N/A
+
+Done.

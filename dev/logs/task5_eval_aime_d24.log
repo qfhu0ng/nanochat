@@ -1,0 +1,19 @@
+Autodetected device type: cuda
+2026-04-16 02:33:24,685 - nanochat.common - [32m[1mINFO[0m - Distributed world size: 1
+2026-04-16 02:33:24,685 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Loading model from /workspace/nanochat_data/chatsft_checkpoints/d24 with step 484
+2026-04-16 02:33:27,081 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Patching missing mlp_variant in model config to 'relu2'
+2026-04-16 02:33:27,082 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Patching missing attn_variant in model config to 'standard'
+2026-04-16 02:33:27,082 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Patching missing use_learnable_norm in model config to False
+2026-04-16 02:33:27,082 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Patching missing kv_lora_rank in model config to 256
+2026-04-16 02:33:27,082 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Patching missing rope_head_dim in model config to 64
+2026-04-16 02:33:27,082 - nanochat.checkpoint_manager - [32m[1mINFO[0m - Building model with config: {'sequence_len': 2048, 'vocab_size': 32768, 'n_layer': 24, 'n_head': 12, 'n_kv_head': 12, 'n_embd': 1536, 'window_pattern': 'SSSL', 'mlp_variant': 'relu2', 'attn_variant': 'standard', 'use_learnable_norm': False, 'kv_lora_rank': 256, 'rope_head_dim': 64}
+Generating train split:   0%|          | 0/30 [00:00<?, ? examples/s]Generating train split: 100%|██████████| 30/30 [00:00<00:00, 6896.26 examples/s]
+[KRank 0 | 0/1 (0.00%)[KRank 0 | 0/2 (0.00%)[KRank 0 | 0/3 (0.00%)[KRank 0 | 0/4 (0.00%)[KRank 0 | 0/5 (0.00%)[KRank 0 | 0/6 (0.00%)[KRank 0 | 0/7 (0.00%)[KRank 0 | 0/8 (0.00%)[KRank 0 | 0/9 (0.00%)[KRank 0 | 0/10 (0.00%)[KRank 0 | 0/11 (0.00%)[KRank 0 | 0/12 (0.00%)[KRank 0 | 0/13 (0.00%)[KRank 0 | 0/14 (0.00%)[KRank 0 | 0/15 (0.00%)[KRank 0 | 0/16 (0.00%)[KRank 0 | 0/17 (0.00%)[KRank 0 | 0/18 (0.00%)[KRank 0 | 0/19 (0.00%)[KRank 0 | 0/20 (0.00%)[KRank 0 | 0/21 (0.00%)[KRank 0 | 0/22 (0.00%)[KRank 0 | 0/23 (0.00%)[KRank 0 | 0/24 (0.00%)[KRank 0 | 0/25 (0.00%)[KRank 0 | 0/26 (0.00%)[KRank 0 | 0/27 (0.00%)[KRank 0 | 0/28 (0.00%)[KRank 0 | 0/29 (0.00%)[KRank 0 | 0/30 (0.00%)
+==================================================
+Final: 0/30 (0.00%)
+AIME-2024 accuracy: 0.00%
+Generating train split:   0%|          | 0/30 [00:00<?, ? examples/s]Generating train split: 100%|██████████| 30/30 [00:00<00:00, 11465.07 examples/s]
+[KRank 0 | 0/1 (0.00%)[KRank 0 | 0/2 (0.00%)[KRank 0 | 0/3 (0.00%)[KRank 0 | 0/4 (0.00%)[KRank 0 | 0/5 (0.00%)[KRank 0 | 0/6 (0.00%)[KRank 0 | 0/7 (0.00%)[KRank 0 | 0/8 (0.00%)[KRank 0 | 0/9 (0.00%)[KRank 0 | 0/10 (0.00%)[KRank 0 | 0/11 (0.00%)[KRank 0 | 0/12 (0.00%)[KRank 0 | 0/13 (0.00%)[KRank 0 | 0/14 (0.00%)[KRank 0 | 0/15 (0.00%)[KRank 0 | 0/16 (0.00%)[KRank 0 | 0/17 (0.00%)[KRank 0 | 0/18 (0.00%)[KRank 0 | 0/19 (0.00%)[KRank 0 | 0/20 (0.00%)[KRank 0 | 0/21 (0.00%)[KRank 0 | 0/22 (0.00%)[KRank 0 | 0/23 (0.00%)[KRank 0 | 0/24 (0.00%)[KRank 0 | 0/25 (0.00%)[KRank 0 | 0/26 (0.00%)[KRank 0 | 0/27 (0.00%)[KRank 0 | 0/28 (0.00%)[KRank 0 | 0/29 (0.00%)[KRank 0 | 1/30 (3.33%)
+==================================================
+Final: 1/30 (3.33%)
+AIME-2025 accuracy: 3.33%
