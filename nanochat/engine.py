@@ -658,28 +658,21 @@ class Engine:
             if max_tokens is not None and num_generated >= max_tokens:
                 break
 
-            # --- Rollback & advance both caches ---
-            # Restore to pre-draft position, then truncate to accepted length.
-            # KV entries at positions P..P+n_accepted-1 are still valid from
-            # the verify/draft forwards, so we just adjust seqlens + prev_embedding.
+            # --- Rollback & re-feed accepted + correction tokens ---
+            # Restore to pre-draft position, then re-feed tokens T=1 each to
+            # guarantee KV entries match standard AR decode exactly (avoids
+            # numerical divergence between FA3's T=K and T=1 kernel paths).
             target_cache.restore_state(target_state)
             draft_cache.restore_state(draft_state)
 
-            if n_accepted > 0:
-                target_cache.cache_seqlens += n_accepted
-                draft_cache.cache_seqlens += n_accepted
-                prev_emb_target = _compute_prev_embedding(
-                    self.model, draft_tokens[n_accepted - 1], device)
-                prev_emb_draft = _compute_prev_embedding(
-                    draft_model, draft_tokens[n_accepted - 1], device)
-                target_cache.prev_embedding = prev_emb_target
-                draft_cache.prev_embedding = prev_emb_draft
+            all_tokens = [draft_tokens[i] for i in range(n_accepted)]
+            if correction_token is not None:
+                all_tokens.append(correction_token)
 
-            # Forward correction/bonus token through both models (T=1)
-            # to get logits for the next round and update caches
-            corr_ids = torch.tensor([[correction_token]], dtype=torch.long, device=device)
-            target_logits = self.model.forward(corr_ids, kv_cache=target_cache)[:, -1, :]
-            draft_logits = draft_model.forward(corr_ids, kv_cache=draft_cache)[:, -1, :]
+            for tok in all_tokens:
+                tok_ids = torch.tensor([[tok]], dtype=torch.long, device=device)
+                target_logits = self.model.forward(tok_ids, kv_cache=target_cache)[:, -1, :]
+                draft_logits = draft_model.forward(tok_ids, kv_cache=draft_cache)[:, -1, :]
 
             # Consistency assertions
             assert (target_cache.cache_seqlens == draft_cache.cache_seqlens).all(), \
